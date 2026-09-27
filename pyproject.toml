@@ -1,0 +1,22 @@
+[project]
+name = "llm-serving"
+version = "0.1.0"
+description = "KV Cache Precision and Speculative Decoding experiments for LLM Serving"
+readme = "README.md"
+authors = [
+    { name = "Mridul Pant", email = "mridulpant2010@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.1.0",
+    "transformers>=4.36.0",
+    "matplotlib>=3.8.0",
+    "numpy>=1.26.0",
+]
+
+[project.scripts]
+llm-serving = "llm_serving:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
