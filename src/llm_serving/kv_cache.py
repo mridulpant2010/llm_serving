@@ -275,6 +275,28 @@ def measure_quantization_error(kv_cache, target_dtype: torch.dtype):
     return results
 
 
+def measure_perplexity(model, tokenizer, text: str, device: str = "cpu") -> float:
+    """
+    Calculate the perplexity of the model on a given text.
+    
+    Perplexity measures how "surprised" the model is by the text. 
+    Lower is better. When testing FP8/INT8 KV Cache, you will run this 
+    on a baseline FP16 cache, and then again on the FP8 cache. The difference
+    in Perplexity is your exact measure of quality degradation (Topic 2).
+    """
+    inputs = tokenizer(text, return_tensors="pt").to(device)
+    
+    # We need the labels to calculate the CrossEntropy loss
+    input_ids = inputs["input_ids"]
+    
+    with torch.no_grad():
+        # Passing labels automatically calculates the loss in HuggingFace
+        outputs = model(input_ids, labels=input_ids)
+        loss = outputs.loss
+        
+    perplexity = torch.exp(loss).item()
+    return perplexity
+
 # ---------------------------------------------------------------------------
 # Latency measurement (TPOT / TTFT)
 # ---------------------------------------------------------------------------

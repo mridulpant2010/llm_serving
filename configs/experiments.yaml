@@ -1,0 +1,101 @@
+# Experiment matrix for the KV-cache-precision x speculative-decoding study.
+# Run `llm-serving list-runs -c configs/experiments.yaml` to see what this expands to.
+
+model: meta-llama/Meta-Llama-3-8B-Instruct
+tokenizer: null          # defaults to `model`
+dtype: auto
+quantization: null       # e.g. "awq" if you fix a 4-bit weight baseline (weights must be
+                         # identical across every run; only the KV cache and speculation vary)
+
+# ---- controls held constant across ALL runs --------------------------------
+fixed:
+  output_len: 256
+  gpu_memory_utilization: 0.90
+  seed: 0
+  max_num_seqs: 256          # auto-raised if a stage sweeps higher concurrency
+  repetitions: 3
+  rounds_per_level: 4        # requests per level = concurrency * rounds
+  min_requests_per_level: 16
+  warmup_requests: 16
+  request_timeout_s: 900
+  server_start_timeout_s: 1200
+  enforce_eager: false
+  stop_on_failure_fraction: 0.5
+  extra_server_args: []
+
+data:
+  corpus_path: data/wikitext2_test.txt     # make with scripts/prepare_corpus.py
+  # sharegpt_path: data/ShareGPT_V3_unfiltered_cleaned_split.json
+
+# ---- speculation methods ----------------------------------------------------
+# Passed verbatim to vLLM's --speculative-config. Key names depend on the vLLM
+# version you pin; check its docs. A draft model MUST share the target's
+# tokenizer/vocab: Llama-3 needs a Llama-3-family drafter (NOT llama-68m,
+# which uses the 32k Llama-2 vocabulary).
+speculation:
+  none: null
+  ngram:
+    method: ngram
+    num_speculative_tokens: 4
+    prompt_lookup_max: 4
+    prompt_lookup_min: 2
+  draft_model:
+    method: draft_model
+    model: meta-llama/Llama-3.2-1B-Instruct
+    num_speculative_tokens: 4
+  eagle:
+    method: eagle
+    model: yuhuili/EAGLE-LLaMA3-Instruct-8B
+    num_speculative_tokens: 4
+
+# ---- stages ------------------------------------------------------------------
+# Server launches = kv_dtypes x speculation. Context and concurrency are swept
+# inside each launch.
+stages:
+  # Topic 2: how much concurrency does FP8 KV buy, and does it become throughput?
+  # Synthetic random-token prompts: content-independent, no shared prefixes.
+  stage1_kv_capacity:
+    workload: synthetic
+    kv_dtypes: [auto, fp8]
+    speculation: [none]
+    context_lengths: [512, 2048, 4096, 8192]
+    concurrency: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    prefix_caching: false
+
+  # Topic 3 with FP16 KV. Real text (corpus windows), because speculation
+  # acceptance depends on content; random tokens would give ~0 acceptance.
+  stage3_spec_fp16:
+    workload: corpus
+    kv_dtypes: [auto]
+    speculation: [none, ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    prefix_caching: false
+
+  # Same sweep with FP8 KV: does C* move?
+  stage4_spec_fp8:
+    workload: corpus
+    kv_dtypes: [fp8]
+    speculation: [none, ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [1, 2, 4, 8, 16, 32, 64, 128, 256]
+    prefix_caching: false
+
+  # Ablation: block sharing. Prefix caching ON, half of every prompt identical.
+  stage5_prefix_ablation:
+    workload: shared_prefix
+    workload_args: {shared_prefix_fraction: 0.5}
+    kv_dtypes: [auto, fp8]
+    speculation: [none]
+    context_lengths: [2048]
+    concurrency: [1, 8, 32, 128, 256]
+    prefix_caching: true
+
+# ---- Stage 2: quality (run with `llm-serving quality`) -----------------------
+quality:
+  kv_dtypes: [auto, fp8]
+  context_lengths: [512, 2048, 4096, 8192]
+  num_windows: 64
+  corpus_path: data/wikitext2_test.txt
+  lm_eval_tasks: [mmlu, humaneval]
+  lm_eval_limit: null

@@ -46,6 +46,7 @@ def run_benchmark(
     print(f"Target Model: {target_model}")
     print(f"KV Cache Precision: {kv_cache_dtype.upper()} (TOPIC 2)")
     print(f"Speculative Model: {speculative_model if speculative_model else 'None'} (TOPIC 3)")
+    print(f"Prefix Caching (Block Sharing): ENABLED")
     print(f"Batch Size (Concurrency): {batch_size}")
     print(f"{'='*50}")
 
@@ -53,12 +54,14 @@ def run_benchmark(
     # This is where the magic happens: vLLM handles the PagedAttention automatically.
     # We pass the kv_cache_dtype to trigger Topic 2.
     # We pass speculative_model to trigger Topic 3.
+    # We enable prefix caching to test Block-Level Sharing.
     try:
         llm = LLM(
             model=target_model,
             kv_cache_dtype=kv_cache_dtype,
             speculative_model=speculative_model,
             num_speculative_tokens=5 if speculative_model else None,
+            enable_prefix_caching=True, # <--- ENABLES BLOCK SHARING
             max_model_len=2048,
             gpu_memory_utilization=0.9, # Use 90% of GPU memory
             enforce_eager=True, # Often needed for smaller GPUs or quick testing
