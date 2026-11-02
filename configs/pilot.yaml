@@ -1,0 +1,84 @@
+# PILOT: verifies every server configuration launches and produces sane numbers.
+# 1 repetition, few concurrency levels, short contexts. Not for the report.
+# Same model / speculation settings as experiments.yaml.
+
+model: meta-llama/Meta-Llama-3-8B-Instruct
+tokenizer: null
+dtype: auto
+quantization: null
+
+fixed:
+  output_len: 128
+  gpu_memory_utilization: 0.90
+  seed: 0
+  max_num_seqs: 256
+  repetitions: 1
+  rounds_per_level: 2
+  min_requests_per_level: 8
+  warmup_requests: 8
+  request_timeout_s: 600
+  server_start_timeout_s: 1200
+  enforce_eager: false
+  stop_on_failure_fraction: 0.5
+  extra_server_args: []
+
+data:
+  corpus_path: data/wikitext2_test.txt
+
+speculation:
+  none: null
+  ngram:
+    method: ngram
+    num_speculative_tokens: 4
+    prompt_lookup_max: 4
+    prompt_lookup_min: 2
+  draft_model:
+    method: draft_model
+    model: meta-llama/Llama-3.2-1B-Instruct
+    num_speculative_tokens: 4
+  eagle:
+    method: eagle
+    model: yuhuili/EAGLE-LLaMA3-Instruct-8B
+    num_speculative_tokens: 4
+
+stages:
+  stage1_kv_capacity:
+    workload: synthetic
+    kv_dtypes: [auto, fp8]
+    speculation: [none]
+    context_lengths: [512, 4096]
+    concurrency: [1, 16, 128]
+    prefix_caching: false
+
+  stage3_spec_fp16:
+    workload: corpus
+    kv_dtypes: [auto]
+    speculation: [ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [1, 16]
+    prefix_caching: false
+
+  stage4_spec_fp8:
+    workload: corpus
+    kv_dtypes: [fp8]
+    speculation: [ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [1, 16]
+    prefix_caching: false
+
+  stage5_prefix_ablation:
+    workload: shared_prefix
+    workload_args: {shared_prefix_fraction: 0.5}
+    kv_dtypes: [auto]
+    speculation: [none]
+    context_lengths: [2048]
+    concurrency: [16]
+    prefix_caching: true
+
+quality:
+  kv_dtypes: [auto, fp8]
+  context_lengths: [512, 2048]
+  num_windows: 16
+  corpus_path: data/wikitext2_test.txt
+  lm_eval_tasks: []
+  lm_eval_limit: null

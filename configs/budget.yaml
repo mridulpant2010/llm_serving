@@ -1,0 +1,86 @@
+# BUDGET: the same study design as experiments.yaml, trimmed to fit ~4 h on one
+# 48 GB GPU. Every comparison in the report is still covered (FP16 vs FP8 KV
+# capacity, C* for each speculation method under both KV dtypes, prefix ablation,
+# quality). Trimmed: 2 reps instead of 3, 5 concurrency levels instead of 9,
+# 3 context lengths in Stage 1, MMLU subsampled.
+
+model: meta-llama/Meta-Llama-3-8B-Instruct
+tokenizer: null
+dtype: auto
+quantization: null
+
+fixed:
+  output_len: 256
+  gpu_memory_utilization: 0.90
+  seed: 0
+  max_num_seqs: 256
+  repetitions: 2
+  rounds_per_level: 2
+  min_requests_per_level: 16
+  warmup_requests: 16
+  request_timeout_s: 900
+  server_start_timeout_s: 1200
+  enforce_eager: false
+  stop_on_failure_fraction: 0.5
+  extra_server_args: []
+
+data:
+  corpus_path: data/wikitext2_test.txt
+
+speculation:
+  none: null
+  ngram:
+    method: ngram
+    num_speculative_tokens: 4
+    prompt_lookup_max: 4
+    prompt_lookup_min: 2
+  draft_model:
+    method: draft_model
+    model: meta-llama/Llama-3.2-1B-Instruct
+    num_speculative_tokens: 4
+  eagle:
+    method: eagle
+    model: yuhuili/EAGLE-LLaMA3-Instruct-8B
+    num_speculative_tokens: 4
+
+stages:
+  stage1_kv_capacity:
+    workload: synthetic
+    kv_dtypes: [auto, fp8]
+    speculation: [none]
+    context_lengths: [512, 2048, 8192]
+    concurrency: [1, 4, 16, 64, 256]
+    prefix_caching: false
+
+  stage3_spec_fp16:
+    workload: corpus
+    kv_dtypes: [auto]
+    speculation: [none, ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [1, 4, 16, 64, 256]
+    prefix_caching: false
+
+  stage4_spec_fp8:
+    workload: corpus
+    kv_dtypes: [fp8]
+    speculation: [none, ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [1, 4, 16, 64, 256]
+    prefix_caching: false
+
+  stage5_prefix_ablation:
+    workload: shared_prefix
+    workload_args: {shared_prefix_fraction: 0.5}
+    kv_dtypes: [auto, fp8]
+    speculation: [none]
+    context_lengths: [2048]
+    concurrency: [1, 32, 256]
+    prefix_caching: true
+
+quality:
+  kv_dtypes: [auto, fp8]
+  context_lengths: [512, 2048, 4096, 8192]
+  num_windows: 64
+  corpus_path: data/wikitext2_test.txt
+  lm_eval_tasks: [mmlu, humaneval]
+  lm_eval_limit: 20        # per MMLU subject (57 subjects -> ~1140 questions); HumanEval capped at 20
