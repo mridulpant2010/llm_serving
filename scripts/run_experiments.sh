@@ -7,8 +7,26 @@
 #   ./scripts/run_experiments.sh full     # full matrix, 3 reps (~12-15 h on one 48 GB GPU)
 #   ./scripts/run_experiments.sh analyze <results_dir>
 set -e
+
+# Activate Vast.ai / system virtualenv if present
+if [ -f "/venv/main/bin/activate" ]; then
+    source /venv/main/bin/activate
+fi
+
+# Resolve python binary
+if command -v python3 &> /dev/null; then
+    PYTHON_BIN="python3"
+elif command -v python &> /dev/null; then
+    PYTHON_BIN="python"
+elif [ -f "/venv/main/bin/python" ]; then
+    PYTHON_BIN="/venv/main/bin/python"
+else
+    echo "ERROR: python binary not found in PATH or /venv/main/bin/python"
+    exit 1
+fi
+
 export PYTHONPATH="$(pwd)/src:${PYTHONPATH}"
-CLI="python -m llm_serving.cli"
+CLI="$PYTHON_BIN -m llm_serving.cli"
 MODE=${1:-pilot}
 
 run_suite () {

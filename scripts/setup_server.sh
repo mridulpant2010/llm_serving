@@ -3,6 +3,11 @@
 # Usage:  ./scripts/setup_server.sh
 set -e
 
+# Activate Vast.ai / system virtualenv if present
+if [ -f "/venv/main/bin/activate" ]; then
+    source /venv/main/bin/activate
+fi
+
 echo "[1/5] GPU check"
 nvidia-smi || { echo "nvidia-smi not found"; exit 1; }
 
