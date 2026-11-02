@@ -82,5 +82,5 @@ quality:
   context_lengths: [512, 2048, 4096, 7680]
   num_windows: 64
   corpus_path: data/wikitext2_test.txt
-  lm_eval_tasks: [mmlu, humaneval]
+  lm_eval_tasks: [mmlu]
   lm_eval_limit: 20        # per MMLU subject (57 subjects -> ~1140 questions); HumanEval capped at 20

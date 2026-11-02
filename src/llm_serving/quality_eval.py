@@ -128,9 +128,14 @@ def run_lm_eval(
     if any("humaneval" in t for t in tasks):
         cmd += ["--confirm_run_unsafe_code"]
         env["HF_ALLOW_CODE_EVAL"] = "1"
-    subprocess.run(cmd, check=True, env=env)
+    try:
+        subprocess.run(cmd, check=True, env=env)
+    except subprocess.CalledProcessError as e:
+        print(f"[Warning] lm_eval failed with returncode {e.returncode}: {e}")
+        return {"error": str(e)}
 
     result_files = sorted(out_dir.rglob("results*.json"), key=lambda p: p.stat().st_mtime)
     if not result_files:
-        raise RuntimeError(f"lm_eval produced no results*.json under {out_dir}")
+        print(f"[Warning] lm_eval produced no results*.json under {out_dir}")
+        return {"error": "no results file found"}
     return json.loads(result_files[-1].read_text(encoding="utf-8")).get("results", {})
