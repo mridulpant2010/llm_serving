@@ -190,6 +190,20 @@ def run_quality(
     out_path = Path(out_path)
     ctxs = [int(c) for c in q["context_lengths"]]
 
+    done_ppl = set()
+    done_lmeval = set()
+    if out_path.exists():
+        for line in out_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    row = json.loads(line)
+                    if row.get("kind") == "perplexity":
+                        done_ppl.add((row.get("kv_dtype"), row.get("context_len")))
+                    elif row.get("kind") == "lm_eval":
+                        done_lmeval.add(row.get("kv_dtype"))
+                except Exception:
+                    pass
+
     if tokenizer_fn is None:
         from .workload import hf_tokenizer_fn
 
@@ -207,17 +221,24 @@ def run_quality(
             context_lengths=tuple(ctxs), concurrency=(1,),
             max_model_len=max(ctxs) + 16, max_num_seqs=cfg.fixed.max_num_seqs,
         )
+        tasks = q.get("lm_eval_tasks") or []
+        need_lmeval = bool(tasks and not skip_lm_eval and backend == "vllm" and kv not in done_lmeval)
+        missing_ctxs = [c for c in ctxs if (kv, c) not in done_ppl]
+
+        if not missing_ctxs and not need_lmeval:
+            log(f"\n=== quality: kv_dtype={kv} already fully evaluated (skipping) ===")
+            continue
+
         log(f"\n=== quality: kv_dtype={kv} ===")
         with make_server(backend, cfg, run, log_dir) as server:
-            for c in ctxs:
+            for c in missing_ctxs:
                 res = quality_eval.perplexity_via_server(server.base_url, cfg.model, windows[c])
                 log(f"ctx={c:>5}  PPL={res['ppl']:.4f}  ({res['n_tokens']} tokens)")
                 _append(out_path, {
                     "kind": "perplexity", "kv_dtype": kv, "context_len": c,
                     "backend": backend, "model": cfg.model, "timestamp": time.time(), **res,
                 })
-            tasks = q.get("lm_eval_tasks") or []
-            if tasks and not skip_lm_eval and backend == "vllm":
+            if need_lmeval:
                 results = quality_eval.run_lm_eval(
                     server.base_url, cfg.model, tasks,
                     out_dir=Path(out_path).parent / "lm_eval" / kv,
