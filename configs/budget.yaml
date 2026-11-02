@@ -79,7 +79,7 @@ stages:
 
 quality:
   kv_dtypes: [auto, fp8]
-  context_lengths: [512, 2048, 4096, 8192]
+  context_lengths: [512, 2048, 4096, 7680]
   num_windows: 64
   corpus_path: data/wikitext2_test.txt
   lm_eval_tasks: [mmlu, humaneval]

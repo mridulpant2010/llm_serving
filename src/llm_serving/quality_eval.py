@@ -38,6 +38,10 @@ def build_windows(
 def _window_nll(
     client: httpx.Client, model: str, ids: list[int]
 ) -> tuple[float, int] | None:
+    # Ensure total prompt + 1 generation token does not exceed Llama-3's 8192 limit
+    if len(ids) >= 8192:
+        ids = ids[:8191]
+
     payload = {
         "model": model,
         "prompt": ids,
@@ -47,6 +51,7 @@ def _window_nll(
     }
     r = client.post("/v1/completions", json=payload)
     if r.status_code != 200:
+        print(f"[Warning] /v1/completions failed {r.status_code}: {r.text[:200]}")
         return None
     plp = r.json()["choices"][0].get("prompt_logprobs")
     if not plp:
