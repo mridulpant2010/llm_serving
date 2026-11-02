@@ -4,7 +4,7 @@
 # quality). Trimmed: 2 reps instead of 3, 5 concurrency levels instead of 9,
 # 3 context lengths in Stage 1, MMLU subsampled.
 
-model: NousResearch/Meta-Llama-3-8B-Instruct
+model: meta-llama/Meta-Llama-3-8B-Instruct
 tokenizer: null
 dtype: auto
 quantization: null
