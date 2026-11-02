@@ -35,7 +35,7 @@ token = os.environ.get("HF_TOKEN")
 # Drafter: unsloth/Llama-3.2-1B-Instruct (public, identical weights & vocab, no 403)
 # Eagle: yuhuili/EAGLE-LLaMA3-Instruct-8B (public Eagle head)
 repos = [
-    "meta-llama/Meta-Llama-3-8B-Instruct",
+    "NousResearch/Meta-Llama-3-8B-Instruct",
     "unsloth/Llama-3.2-1B-Instruct",
     "yuhuili/EAGLE-LLaMA3-Instruct-8B",
 ]
