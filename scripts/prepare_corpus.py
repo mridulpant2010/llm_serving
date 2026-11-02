@@ -9,8 +9,11 @@ from pathlib import Path
 import urllib.request
 import sys
 
-out = Path("data")
-out.mkdir(exist_ok=True)
+repo_root = Path(__file__).resolve().parent.parent
+out = repo_root / "data"
+out.mkdir(parents=True, exist_ok=True)
+# Also create in local directory if running from outside repo
+Path("data").mkdir(parents=True, exist_ok=True)
 
 # Direct raw fallback URLs (PyTorch official NLP dataset mirrors)
 FALLBACK_URLS = {
@@ -33,6 +36,8 @@ for split in ("train", "test"):
             ds = load_dataset(ds_name, "wikitext-2-raw-v1", split=split)
             text = "".join(ds["text"])
             target_file.write_text(text, encoding="utf-8")
+            if Path("data").resolve() != out.resolve():
+                (Path("data") / f"wikitext2_{split}.txt").write_text(text, encoding="utf-8")
             print(f"{split}: successfully saved {len(text):,} characters")
             downloaded = True
             break
@@ -48,6 +53,8 @@ for split in ("train", "test"):
             with urllib.request.urlopen(req, timeout=30) as resp:
                 raw_text = resp.read().decode("utf-8")
                 target_file.write_text(raw_text, encoding="utf-8")
+                if Path("data").resolve() != out.resolve():
+                    (Path("data") / f"wikitext2_{split}.txt").write_text(raw_text, encoding="utf-8")
                 print(f"{split}: successfully downloaded {len(raw_text):,} characters")
                 downloaded = True
         except Exception as e:

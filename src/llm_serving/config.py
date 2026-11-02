@@ -156,8 +156,8 @@ def expand_runs(
                         workload_args=dict(stage.get("workload_args") or {}),
                         context_lengths=ctxs,
                         concurrency=concs,
-                        # +16 leaves headroom for special tokens / template overhead
-                        max_model_len=max(ctxs) + cfg.fixed.output_len + 16,
+                        # Capped at 8192 to match Llama-3's max_position_embeddings
+                        max_model_len=min(8192, max(ctxs) + cfg.fixed.output_len + 16),
                         max_num_seqs=max(cfg.fixed.max_num_seqs, max(concs)),
                     )
                 )

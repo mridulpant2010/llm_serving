@@ -219,7 +219,7 @@ def run_quality(
             stage="quality", kv_dtype=kv, spec_name="none", spec_config=None,
             prefix_caching=False, workload="corpus", workload_args={},
             context_lengths=tuple(ctxs), concurrency=(1,),
-            max_model_len=max(ctxs) + 16, max_num_seqs=cfg.fixed.max_num_seqs,
+            max_model_len=min(8192, max(ctxs) + 16), max_num_seqs=cfg.fixed.max_num_seqs,
         )
         tasks = q.get("lm_eval_tasks") or []
         need_lmeval = bool(tasks and not skip_lm_eval and backend == "vllm" and kv not in done_lmeval)

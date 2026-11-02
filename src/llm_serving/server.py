@@ -80,7 +80,9 @@ class VllmServer:
         self._log.write("$ " + " ".join(cmd) + "\n")
         self._log.flush()
         kwargs = {"start_new_session": True} if os.name == "posix" else {}
-        self._proc = subprocess.Popen(cmd, stdout=self._log, stderr=subprocess.STDOUT, **kwargs)
+        env = dict(os.environ)
+        env["VLLM_ALLOW_LONG_MAX_MODEL_LEN"] = "1"
+        self._proc = subprocess.Popen(cmd, stdout=self._log, stderr=subprocess.STDOUT, env=env, **kwargs)
         self._wait_ready(self.cfg.fixed.server_start_timeout_s)
 
     def _wait_ready(self, timeout_s: float) -> None:

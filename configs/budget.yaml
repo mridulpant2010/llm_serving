@@ -48,7 +48,7 @@ stages:
     workload: synthetic
     kv_dtypes: [auto, fp8]
     speculation: [none]
-    context_lengths: [512, 2048, 8192]
+    context_lengths: [512, 2048, 7680]
     concurrency: [1, 4, 16, 64, 256]
     prefix_caching: false
 

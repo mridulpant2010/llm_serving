@@ -13,6 +13,8 @@ if [ -f "/venv/main/bin/activate" ]; then
     source /venv/main/bin/activate
 fi
 
+cd "$(dirname "$0")/.."
+
 # Resolve python binary
 if command -v python3 &> /dev/null; then
     PYTHON_BIN="python3"
@@ -23,6 +25,12 @@ elif [ -f "/venv/main/bin/python" ]; then
 else
     echo "ERROR: python binary not found in PATH or /venv/main/bin/python"
     exit 1
+fi
+
+# Ensure corpus data exists
+if [ ! -f "data/wikitext2_test.txt" ]; then
+    echo "Preparing corpus data..."
+    $PYTHON_BIN scripts/prepare_corpus.py
 fi
 
 export PYTHONPATH="$(pwd)/src:${PYTHONPATH}"
