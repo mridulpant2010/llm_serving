@@ -2,7 +2,7 @@
 # 1 repetition, few concurrency levels, short contexts. Not for the report.
 # Same model / speculation settings as experiments.yaml.
 
-model: NousResearch/Meta-Llama-3-8B-Instruct
+model: meta-llama/Meta-Llama-3-8B-Instruct
 tokenizer: null
 dtype: auto
 quantization: null
@@ -34,7 +34,7 @@ speculation:
     prompt_lookup_min: 2
   draft_model:
     method: draft_model
-    model: unsloth/Llama-3.2-1B-Instruct
+    model: meta-llama/Llama-3.2-1B-Instruct
     num_speculative_tokens: 4
   eagle:
     method: eagle
