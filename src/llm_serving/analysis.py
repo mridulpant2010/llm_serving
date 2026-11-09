@@ -169,6 +169,8 @@ def crossover_table(agg: list[dict]) -> list[dict]:
         if not cs:
             continue
         co = find_crossover(cs, ss)
+        cs_tps, ss_tps = speedup_series_tps(agg, kv, spec, ctx, wl, pc)
+        co_tps = find_crossover(cs_tps, ss_tps)
         acc = [a.get("srv_acceptance_rate") for a in _select(
             agg, kv_dtype=kv, spec=spec, context_len=ctx, workload=wl, prefix_caching=pc)
             if a.get("srv_acceptance_rate") is not None]
@@ -177,9 +179,24 @@ def crossover_table(agg: list[dict]) -> list[dict]:
             "speedup_at_min_C": ss[0], "min_C": cs[0],
             "speedup_at_max_C": ss[-1], "max_C": cs[-1],
             "c_star": co.c_star, "status": co.status,
+            "tps_speedup_min_C": ss_tps[0] if ss_tps else None,
+            "tps_speedup_max_C": ss_tps[-1] if ss_tps else None,
+            "c_star_tps": co_tps.c_star, "status_tps": co_tps.status,
             "mean_acceptance_rate": float(np.mean(acc)) if acc else None,
         })
     return rows
+
+
+def speedup_series_tps(
+    agg: list[dict], kv_dtype: str, spec: str, ctx: int, workload: str,
+    prefix_caching: bool = False,
+) -> tuple[list[int], list[float]]:
+    common = dict(kv_dtype=kv_dtype, context_len=ctx, workload=workload,
+                  prefix_caching=prefix_caching)
+    base = {a["concurrency"]: a.get("throughput_tps") for a in _select(agg, spec="none", **common)}
+    sp = {a["concurrency"]: a.get("throughput_tps") for a in _select(agg, spec=spec, **common)}
+    cs = sorted(c for c in base if c in sp and base[c] and sp[c])
+    return cs, [sp[c] / base[c] for c in cs]
 
 
 # ---------------------------------------------------------------------------
@@ -220,14 +237,13 @@ def fig_throughput(agg: list[dict], ctx: int, workload: str, path: Path) -> None
     plt = _plt()
     fig, ax = plt.subplots(figsize=(8, 5))
     for kv in sorted({a["kv_dtype"] for a in agg}):
-        s = _select(agg, kv_dtype=kv, spec="none", context_len=ctx, workload=workload,
-                    prefix_caching=False)
+        s = _select(agg, kv_dtype=kv, spec="none", context_len=ctx, workload=workload)
         if s:
             ax.plot([a["concurrency"] for a in s], [a["throughput_tps"] for a in s],
                     "o-", label=_label(kv))
     ax.set_xscale("log", base=2)
     ax.set_xlabel("Concurrency C"); ax.set_ylabel("Throughput (tokens/s)")
-    ax.set_title(f"Throughput vs concurrency (context={ctx})")
+    ax.set_title(f"Throughput vs concurrency ({workload}, context={ctx})")
     ax.grid(alpha=0.3); ax.legend()
     fig.tight_layout(); fig.savefig(path, dpi=150); plt.close(fig)
 
@@ -288,6 +304,11 @@ def fig_regime_map(agg: list[dict], spec: str, workload: str, path: Path) -> Non
             for c, s in zip(cs, ss):
                 grid[i, concs.index(c)] = s
         im = ax.imshow(grid, aspect="auto", origin="lower", cmap="RdYlGn", vmin=0.5, vmax=2.0)
+        for i in range(len(ctxs)):
+            for j in range(len(concs)):
+                if np.isfinite(grid[i, j]):
+                    ax.text(j, i, f"{grid[i, j]:.2f}x", ha="center", va="center",
+                            color="black", fontweight="bold", fontsize=9)
         if np.isfinite(grid).sum() > 3 and grid.shape[0] > 1 and grid.shape[1] > 1:
             ax.contour(np.nan_to_num(grid, nan=1.0), levels=[1.0], colors="k")
         ax.set_xticks(range(len(concs)), concs); ax.set_yticks(range(len(ctxs)), ctxs)
@@ -332,7 +353,7 @@ def generate_report(
     for kv, wl, ctx in sorted({(a["kv_dtype"], a["workload"], a["context_len"]) for a in agg
                                if a["spec"] == "none"}, key=str):
         k = throughput_knee(_select(agg, kv_dtype=kv, spec="none", workload=wl,
-                                    context_len=ctx, prefix_caching=False))
+                                    context_len=ctx))
         knees.append({"kv_dtype": kv, "workload": wl, "context_len": ctx, **k})
 
     # figures
@@ -364,7 +385,7 @@ def generate_report(
         "\n## Throughput knee (turns concurrency into throughput, or hits a compute wall?)\n" +
         _md_table(knees, ["workload", "context_len", "kv_dtype", "peak_tps", "knee_C"]) +
         "\n## Speculative decoding crossover C*\n" + _md_table(cross, ["workload", "kv_dtype",
-            "spec", "context_len", "speedup_at_min_C", "speedup_at_max_C", "c_star", "status",
+            "spec", "context_len", "speedup_at_min_C", "speedup_at_max_C", "c_star", "c_star_tps", "status",
             "mean_acceptance_rate"]) +
         "\n## Quality: FP8 vs FP16 KV cache\n" + _md_table(qdelta, list(qdelta[0]) if qdelta else [])
     )
