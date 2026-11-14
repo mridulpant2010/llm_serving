@@ -1,0 +1,91 @@
+# EXTRA: follow-up runs to close the gaps in the budget study.
+# Same model, speculation settings and measurement controls as budget.yaml, except
+# repetitions: 3 (budget used 2). Results go to a SEPARATE file (results_extra/) so the
+# existing rows are untouched and every row here carries real telemetry.
+# Copy to configs/extra.yaml on the GPU instance.
+
+model: meta-llama/Meta-Llama-3-8B-Instruct
+tokenizer: null
+dtype: auto
+quantization: null
+
+fixed:
+  output_len: 256
+  gpu_memory_utilization: 0.90
+  seed: 0
+  max_num_seqs: 256
+  repetitions: 3
+  rounds_per_level: 2
+  min_requests_per_level: 16
+  warmup_requests: 16
+  request_timeout_s: 900
+  server_start_timeout_s: 1200
+  enforce_eager: false
+  stop_on_failure_fraction: 0.5
+  extra_server_args: []
+
+data:
+  corpus_path: data/wikitext2_test.txt
+
+speculation:
+  none: null
+  ngram:
+    method: ngram
+    num_speculative_tokens: 4
+    prompt_lookup_max: 4
+    prompt_lookup_min: 2
+  draft_model:
+    method: draft_model
+    model: meta-llama/Llama-3.2-1B-Instruct
+    num_speculative_tokens: 4
+  eagle:
+    method: eagle
+    model: yuhuili/EAGLE-LLaMA3-Instruct-8B
+    num_speculative_tokens: 4
+
+stages:
+  # (1) Cache-off control for the prefix-caching comparison: same shared-prefix
+  #     workload as stage5_prefix_ablation, caching disabled.
+  stage5c_prefix_control:
+    workload: shared_prefix
+    workload_args: {shared_prefix_fraction: 0.5}
+    kv_dtypes: [auto, fp8]
+    speculation: [none]
+    context_lengths: [2048]
+    concurrency: [1, 32, 256]
+    prefix_caching: false
+
+  # (2) Finer concurrency grid between the points where speculation stops paying off.
+  stage3b_fine_fp16:
+    workload: corpus
+    kv_dtypes: [auto]
+    speculation: [none, ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [8, 32, 128]
+    prefix_caching: false
+
+  stage3b_fine_fp8:
+    workload: corpus
+    kv_dtypes: [fp8]
+    speculation: [none, ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [8, 32, 128]
+    prefix_caching: false
+
+  # (3) OPTIONAL clean re-run of the FP8 speculation sweep (stage 4) and FP16 EAGLE,
+  #     3 repeats, with real telemetry (TTFT, power, KV usage).
+  stage4r_spec_fp8:
+    workload: corpus
+    kv_dtypes: [fp8]
+    speculation: [none, ngram, draft_model, eagle]
+    context_lengths: [2048]
+    concurrency: [1, 4, 16, 64, 256]
+    prefix_caching: false
+
+  stage3r_eagle_fp16:
+    workload: corpus
+    kv_dtypes: [auto]
+    speculation: [none, eagle]
+    context_lengths: [2048]
+    concurrency: [1, 4, 16, 64, 256]
+    prefix_caching: false
