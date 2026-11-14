@@ -94,7 +94,7 @@ def run_via_server(
 
 def extract_pass_at_1(results: dict) -> float | None:
     he = results.get("humaneval", {})
-    for key in ("pass@1,none", "pass@1"):
+    for key in ("pass@1,create_test", "pass@1,none", "pass@1"):
         if key in he:
             return float(he[key])
     return None

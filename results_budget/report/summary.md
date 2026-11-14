@@ -48,8 +48,14 @@
 | corpus | fp8 | ngram | 2048 | 1.22 | 1.23 | - | 15 | no_crossover_in_range | 0.121 |
 
 ## Quality: FP8 vs FP16 KV cache
+### WikiText-2 Perplexity
 | context_len | ppl_auto | ppl_fp8 | delta | delta_pct |
 |---|---|---|---|---|
 | 512 | 10.8 | 10.9 | 0.0191 | 0.176 |
 | 2048 | 8.24 | 8.26 | 0.0217 | 0.264 |
 | 4096 | 7.69 | 7.7 | 0.0176 | 0.229 |
+
+### Downstream Benchmarks (e.g. HumanEval)
+| task | metric | val_auto | val_fp8 | delta | delta_pct |
+|---|---|---|---|---|---|
+| humaneval | pass@1 | 0.598 | 0.585 | -0.0122 | -2.04 |

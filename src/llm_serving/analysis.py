@@ -221,7 +221,7 @@ def quality_deltas(quality_rows: list[dict], base: str = "auto", other: str = "f
         for task in sorted(set(res_base.keys()) & set(res_other.keys())):
             tb = res_base[task]
             to = res_other[task]
-            for m in ["pass@1,none", "pass@1", "acc,none", "acc"]:
+            for m in ["pass@1,create_test", "pass@1,none", "pass@1", "acc,none", "acc"]:
                 if m in tb and m in to:
                     vb, vo = float(tb[m]), float(to[m])
                     out.append({
@@ -396,6 +396,16 @@ def generate_report(
     if "mock" in backends:
         banner = ("> **WARNING: these results come from the MOCK server (simulated). "
                   "Do not report them as measurements.**\n\n")
+    ppl_rows = [r for r in qdelta if "ppl_auto" in r]
+    bench_rows = [r for r in qdelta if "task" in r]
+    quality_md = "\n## Quality: FP8 vs FP16 KV cache\n"
+    if ppl_rows:
+        quality_md += "### WikiText-2 Perplexity\n" + _md_table(ppl_rows, ["context_len", "ppl_auto", "ppl_fp8", "delta", "delta_pct"])
+    if bench_rows:
+        quality_md += "\n### Downstream Benchmarks (e.g. HumanEval)\n" + _md_table(bench_rows, ["task", "metric", f"val_{'auto'}", f"val_{'fp8'}", "delta", "delta_pct"])
+    if not ppl_rows and not bench_rows:
+        quality_md += "_no data_\n"
+
     md = (
         f"# Experiment summary\n\n{banner}"
         "## KV capacity (FP16 vs FP8)\n" + _md_table(cap, ["workload", "context_len", "kv_dtype",
@@ -407,7 +417,7 @@ def generate_report(
         "\n## Speculative decoding crossover C*\n" + _md_table(cross, ["workload", "kv_dtype",
             "spec", "context_len", "speedup_at_min_C", "speedup_at_max_C", "c_star", "c_star_tps", "status",
             "mean_acceptance_rate"]) +
-        "\n## Quality: FP8 vs FP16 KV cache\n" + _md_table(qdelta, list(qdelta[0]) if qdelta else [])
+        quality_md
     )
     (out / "summary.md").write_text(md, encoding="utf-8")
     return summary

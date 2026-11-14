@@ -222,6 +222,9 @@ for c, p16, p8 in zip(ctx_q_fp16, ppl_fp16, ppl_fp8[:3]):
                      ha="center", fontsize=9.5, fontweight="bold", color="#2ca02c")
 axes[0].annotate("FP8 completes 7680\n(PPL = 7.5564)\nFP16 hits 8k limit", xy=(7680, 7.5564), xytext=(4800, 8.3),
                  arrowprops=dict(facecolor="green", shrink=0.08, width=1, headwidth=6), fontsize=9.5)
+axes[0].text(0.04, 0.08, "HumanEval pass@1 (164 tasks):\n  • FP16: 59.76% (98 / 164)\n  • FP8:   58.54% (96 / 164)\n  • Δ = -1.22% (within ±3.85% SE)",
+             transform=axes[0].transAxes, fontsize=9,
+             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f8f9fa", edgecolor="#6c757d", alpha=0.95))
 
 # Panel B: Prefix Caching Throughput Synergy (Stage 5 vs Stage 1/3 at ctx=2048)
 c_pc = [1, 32, 256]
