@@ -180,6 +180,9 @@ def run_quality(
     out_path: str | Path,
     tokenizer_fn: TokenizerFn | None = None,
     skip_lm_eval: bool = False,
+    skip_perplexity: bool = False,
+    tasks: list[str] | None = None,
+    limit: int | None = None,
     log: Log = print,
     log_dir: str | Path = "results/server_logs",
 ) -> None:
@@ -204,15 +207,20 @@ def run_quality(
                 except Exception:
                     pass
 
-    if tokenizer_fn is None:
-        from .workload import hf_tokenizer_fn
+    active_tasks = tasks if tasks is not None else (q.get("lm_eval_tasks") or [])
+    active_limit = limit if limit is not None else q.get("lm_eval_limit")
 
-        tokenizer_fn = hf_tokenizer_fn(cfg.tokenizer_name)
-    corpus = tokenizer_fn(Path(q["corpus_path"]).read_text(encoding="utf-8"))
-    windows = {
-        c: quality_eval.build_windows(corpus, c, int(q.get("num_windows", 64)), cfg.fixed.seed)
-        for c in ctxs
-    }
+    windows = {}
+    if not skip_perplexity:
+        if tokenizer_fn is None:
+            from .workload import hf_tokenizer_fn
+
+            tokenizer_fn = hf_tokenizer_fn(cfg.tokenizer_name)
+        corpus = tokenizer_fn(Path(q["corpus_path"]).read_text(encoding="utf-8"))
+        windows = {
+            c: quality_eval.build_windows(corpus, c, int(q.get("num_windows", 64)), cfg.fixed.seed)
+            for c in ctxs
+        }
 
     for kv in q["kv_dtypes"]:
         run = ServerRun(
@@ -221,9 +229,8 @@ def run_quality(
             context_lengths=tuple(ctxs), concurrency=(1,),
             max_model_len=min(8192, max(ctxs) + 16), max_num_seqs=cfg.fixed.max_num_seqs,
         )
-        tasks = q.get("lm_eval_tasks") or []
-        need_lmeval = bool(tasks and not skip_lm_eval and backend == "vllm" and kv not in done_lmeval)
-        missing_ctxs = [c for c in ctxs if (kv, c) not in done_ppl]
+        need_lmeval = bool(active_tasks and not skip_lm_eval and backend == "vllm" and kv not in done_lmeval)
+        missing_ctxs = [] if skip_perplexity else [c for c in ctxs if (kv, c) not in done_ppl]
 
         if not missing_ctxs and not need_lmeval:
             log(f"\n=== quality: kv_dtype={kv} already fully evaluated (skipping) ===")
@@ -240,9 +247,9 @@ def run_quality(
                 })
             if need_lmeval:
                 results = quality_eval.run_lm_eval(
-                    server.base_url, cfg.model, tasks,
+                    server.base_url, cfg.model, active_tasks,
                     out_dir=Path(out_path).parent / "lm_eval" / kv,
-                    limit=q.get("lm_eval_limit"),
+                    limit=active_limit,
                 )
                 _append(out_path, {
                     "kind": "lm_eval", "kv_dtype": kv, "backend": backend,

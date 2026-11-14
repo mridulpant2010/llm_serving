@@ -213,6 +213,26 @@ def quality_deltas(quality_rows: list[dict], base: str = "auto", other: str = "f
         p1 = ppl[(other, ctx)]
         out.append({"context_len": ctx, f"ppl_{base}": p0, f"ppl_{other}": p1,
                     "delta": p1 - p0, "delta_pct": 100.0 * (p1 - p0) / p0})
+
+    lmeval_by_kv = {r["kv_dtype"]: r.get("results", {}) for r in quality_rows if r.get("kind") == "lm_eval"}
+    if base in lmeval_by_kv and other in lmeval_by_kv:
+        res_base = lmeval_by_kv[base]
+        res_other = lmeval_by_kv[other]
+        for task in sorted(set(res_base.keys()) & set(res_other.keys())):
+            tb = res_base[task]
+            to = res_other[task]
+            for m in ["pass@1,none", "pass@1", "acc,none", "acc"]:
+                if m in tb and m in to:
+                    vb, vo = float(tb[m]), float(to[m])
+                    out.append({
+                        "task": task,
+                        "metric": m.split(",")[0],
+                        f"val_{base}": vb,
+                        f"val_{other}": vo,
+                        "delta": vo - vb,
+                        "delta_pct": (100.0 * (vo - vb) / vb) if vb > 0 else 0.0,
+                    })
+                    break
     return out
 
 

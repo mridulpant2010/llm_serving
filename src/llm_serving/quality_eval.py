@@ -126,7 +126,10 @@ def run_lm_eval(
     if limit:
         cmd += ["--limit", str(limit)]
     if any("humaneval" in t for t in tasks):
-        cmd += ["--confirm_run_unsafe_code"]
+        cmd += [
+            "--confirm_run_unsafe_code",
+            "--gen_kwargs", "until=['\\nclass','\\ndef','\\n#','\\nif']",
+        ]
         env["HF_ALLOW_CODE_EVAL"] = "1"
     try:
         subprocess.run(cmd, check=True, env=env)
@@ -137,5 +140,50 @@ def run_lm_eval(
     result_files = sorted(out_dir.rglob("results*.json"), key=lambda p: p.stat().st_mtime)
     if not result_files:
         print(f"[Warning] lm_eval produced no results*.json under {out_dir}")
+        return {"error": "no results file found"}
+    return json.loads(result_files[-1].read_text(encoding="utf-8")).get("results", {})
+
+
+def run_lm_eval_direct_vllm(
+    model: str,
+    kv_dtype: str,
+    tasks: list[str],
+    out_dir: str | Path,
+    limit: int | None = None,
+    gpu_memory_utilization: float = 0.90,
+    max_model_len: int = 4096,
+) -> dict[str, Any]:
+    """Run lm-evaluation-harness directly using --model vllm (in-process).
+
+    This bypasses the HTTP API server entirely, avoiding OpenAPI/FastAPI stop-sequence limits.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    model_args = (
+        f"pretrained={model},dtype=auto,kv_cache_dtype={kv_dtype},"
+        f"gpu_memory_utilization={gpu_memory_utilization},max_model_len={max_model_len}"
+    )
+    cmd = [
+        "lm_eval",
+        "--model", "vllm",
+        "--model_args", model_args,
+        "--tasks", ",".join(tasks),
+        "--output_path", str(out_dir),
+    ]
+    env = dict(os.environ)
+    if limit:
+        cmd += ["--limit", str(limit)]
+    if any("humaneval" in t for t in tasks):
+        cmd += ["--confirm_run_unsafe_code"]
+        env["HF_ALLOW_CODE_EVAL"] = "1"
+    try:
+        subprocess.run(cmd, check=True, env=env)
+    except subprocess.CalledProcessError as e:
+        print(f"[Warning] direct vllm lm_eval failed with returncode {e.returncode}: {e}")
+        return {"error": str(e)}
+
+    result_files = sorted(out_dir.rglob("results*.json"), key=lambda p: p.stat().st_mtime)
+    if not result_files:
+        print(f"[Warning] direct vllm lm_eval produced no results*.json under {out_dir}")
         return {"error": "no results file found"}
     return json.loads(result_files[-1].read_text(encoding="utf-8")).get("results", {})

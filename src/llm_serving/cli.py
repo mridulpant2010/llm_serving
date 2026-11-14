@@ -49,8 +49,16 @@ def _cmd_quality(args) -> None:
 
     cfg = load_config(args.config)
     out = args.out or _default_out(args.backend, "quality")
-    run_quality(cfg, args.backend, out, skip_lm_eval=args.skip_lm_eval,
-                log_dir=Path(out).parent / "server_logs")
+    run_quality(
+        cfg,
+        args.backend,
+        out,
+        skip_lm_eval=args.skip_lm_eval,
+        skip_perplexity=args.skip_perplexity,
+        tasks=args.tasks,
+        limit=args.limit,
+        log_dir=Path(out).parent / "server_logs",
+    )
 
 
 def _cmd_analyze(args) -> None:
@@ -88,6 +96,9 @@ def main(argv: list[str] | None = None) -> None:
     common(sp)
     sp.add_argument("--out")
     sp.add_argument("--skip-lm-eval", action="store_true")
+    sp.add_argument("--skip-perplexity", "--skip-ppl", action="store_true", help="skip perplexity eval")
+    sp.add_argument("--tasks", nargs="*", help="override lm_eval_tasks (e.g. humaneval)")
+    sp.add_argument("--limit", type=int, help="override lm_eval_limit (e.g. 20)")
     sp.set_defaults(fn=_cmd_quality)
 
     sp = sub.add_parser("analyze", help="tables, figures, C* from collected results")
