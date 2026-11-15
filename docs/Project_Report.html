@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Project Report - CS5903</title>
+
+    <style>
+    @page {
+        size: A4;
+        margin: 18mm 18mm 18mm 18mm;
+        @bottom-right {
+            content: counter(page);
+        }
+    }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 10pt;
+        line-height: 1.5;
+        color: #1a1a1a;
+    }
+    h1 {
+        font-size: 19pt;
+        border-bottom: 2.5px solid #1f4e79;
+        padding-bottom: 6px;
+        color: #1f4e79;
+        margin-top: 0;
+        margin-bottom: 12pt;
+    }
+    h2 {
+        font-size: 13.5pt;
+        border-bottom: 1px solid #b0c4de;
+        padding-bottom: 4px;
+        color: #2b5797;
+        margin-top: 18pt;
+        margin-bottom: 8pt;
+        page-break-after: avoid;
+    }
+    h3 {
+        font-size: 11pt;
+        color: #333333;
+        margin-top: 12pt;
+        margin-bottom: 6pt;
+        page-break-after: avoid;
+    }
+    h4 {
+        font-size: 10pt;
+        color: #444444;
+        margin-top: 8pt;
+        page-break-after: avoid;
+    }
+    p, ul, ol {
+        margin-top: 4pt;
+        margin-bottom: 6pt;
+    }
+    li {
+        margin-bottom: 3pt;
+    }
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 10pt 0;
+        font-size: 9pt;
+        page-break-inside: avoid;
+    }
+    th, td {
+        border: 1px solid #c0c0c0;
+        padding: 5px 8px;
+        text-align: left;
+    }
+    th {
+        background-color: #f0f4f8;
+        font-weight: 600;
+        color: #1f4e79;
+    }
+    tr:nth-child(even) {
+        background-color: #fafbfc;
+    }
+    code {
+        font-family: "Consolas", "Courier New", monospace;
+        background: #f4f5f7;
+        padding: 1.5px 4px;
+        font-size: 8.5pt;
+        border-radius: 3px;
+        border: 1px solid #e1e4e8;
+    }
+    pre {
+        background: #f8f9fa;
+        border: 1px solid #dcdcdc;
+        padding: 8px 10px;
+        font-size: 8.5pt;
+        border-radius: 4px;
+        overflow-x: auto;
+        page-break-inside: avoid;
+    }
+    blockquote {
+        border-left: 3.5px solid #2b5797;
+        margin: 8pt 0;
+        padding: 4pt 10pt;
+        background: #f4f8fc;
+        font-size: 9.5pt;
+    }
+    hr {
+        border: 0;
+        border-top: 1px solid #ddd;
+        margin: 14pt 0;
+    }
+    </style>
+    
+</head>
+<body>
+<h1>Project Report: Balancing Memory and Compute in LLM Serving</h1>
+<p><strong>Course:</strong> CS5903: Distributed AI Training<br />
+<strong>Project ID:</strong> 15<br />
+<strong>Candidate:</strong> Mridul Pant (<code>cs24mtech15009</code>)<br />
+<strong>Institution:</strong> Department of Computer Science &amp; Engineering, IIT Hyderabad<br />
+<strong>Repository:</strong> <a href="https://github.com/mridulpant2010/llm_serving">https://github.com/mridulpant2010/llm_serving</a><br />
+<strong>Submission Tag:</strong> <code>cs5903-final-2026</code><br />
+<strong>Evaluation Target Date:</strong> 21 November 2026  </p>
+<hr />
+<h2>Executive Summary</h2>
+<p>Autoregressive Large Language Model (LLM) serving is bifurcated between two physical regimes: compute-bound parallel prefill and memory-bandwidth-bound sequential decode. Modern serving infrastructures deploy two popular but competing optimizations: <strong>FP8 KV cache quantization</strong> (to expand physical memory capacity and maximize batch concurrency) and <strong>speculative decoding</strong> (to trade idle GPU compute for reduced single-stream latency). </p>
+<p>This project characterizes the unexplored empirical interaction between these two levers under heavy concurrency ($C \in [1, 256]$) and long context lengths ($512$ to $7,680$ tokens). Benchmarking <code>Meta-Llama-3-8B-Instruct</code> across 156 experimental runs on a 48 GB enterprise GPU, we discover that FP8 KV cache doubles physical cache blocks ($1.970\times$ gain) and eliminates catastrophic memory preemption collapse at high load (averting 35 sequence evictions at $C=256$, boosting throughput by $+45.3\%$). Crucially, FP8 shifts the speculative decoding latency crossover boundary ($C^<em>$) outward by up to </em><em>$+2.60\times$</em>* (from $C=16.6$ to $C=43.6$ for EAGLE), expanding the operational envelope where speculative decoding remains beneficial. Evaluating across 491,456 tokens on WikiText-2 ($\Delta \text{PPL} \le +0.26\%$) and the full 164-task HumanEval benchmark ($58.54\%$ vs. $59.76\%$, $\Delta = -1.22\%$ within $\pm 3.85\%$ standard error), we demonstrate strict quality Pareto dominance. All orchestration, automated load generation, telemetry collection, and analysis pipelines are fully operational and verified through 24 passing automated tests.</p>
+<hr />
+<h2>1. Problem, Scope &amp; Success Criteria</h2>
+<h3>1.1 Target Users &amp; Actors</h3>
+<ul>
+<li><strong>Cloud Infrastructure Providers &amp; ML Platform Engineers</strong>: Operating shared model-serving endpoints (e.g., vLLM, TGI, Triton) under strict Service Level Objectives (SLOs) balancing latency (Time Per Output Token, TPOT) and cost (Tokens Per Second, TPS).</li>
+<li><strong>Enterprise Inference Orchestrators</strong>: Needing dynamic scheduling heuristics to decide whether to activate or deactivate speculative decoding heads based on real-time request queue depth.</li>
+</ul>
+<h3>1.2 Problem Statement</h3>
+<p>During sequential decode, the arithmetic intensity of autoregressive generation is severely memory-bound:</p>
+<p>$$I_{\text{decode}} = \frac{2 \times P \times B}{2 \times P + 2 \times L \times n_{\text{layers}} \times d_{\text{kv}} \times B} \approx \mathcal{O}(1) \text{ FLOP/byte}$$</p>
+<p>To counter this, serving engines apply two independent techniques:
+1. <strong>Memory Compression (FP8 KV Cache)</strong>: Quantizes KV blocks from 16-bit to 8-bit, halving the KV footprint and allowing the scheduler to pack higher batch concurrency into VRAM.
+2. <strong>Compute Acceleration (Speculative Decoding)</strong>: Employs an auxiliary speculator (N-gram, EAGLE, or a small draft model) to emit candidate tokens that the target model verifies in parallel in a single forward pass.</p>
+<p><strong>The Core Conflict</strong>: Speculative decoding relies entirely on spare, idle GPU compute. As FP8 doubles concurrency, larger batches saturate GPU Tensor Cores, eliminating the arithmetic headroom that speculative verification requires. Furthermore, auxiliary speculative models consume target GPU VRAM, shrinking the physical KV block pool. Prior literature benchmarks these techniques in isolation; their dynamic interaction under load remains uncharacterized.</p>
+<h3>1.3 In-Scope vs. Out-of-Scope</h3>
+<ul>
+<li><strong>In-Scope</strong>:</li>
+<li>Unquantized base model weights (<code>Meta-Llama-3-8B-Instruct</code>) in native BF16/FP16.</li>
+<li>PagedAttention KV cache precision: FP16 (<code>auto</code>) vs. FP8 E4M3 (<code>fp8</code>).</li>
+<li>Speculative spectrum: N-gram prompt lookup, EAGLE feature prediction head, and independent autoregressive draft model (<code>Llama-3.2-1B-Instruct</code>).</li>
+<li>System load sweeps: Concurrency $C \in [1, 256]$; context lengths $L \in [512, 7680]$; output length $256$.</li>
+<li>Quality verification: Token-level perplexity across $491\text{k}$ tokens and functional correctness across all 164 problems of HumanEval.</li>
+<li><strong>Out-of-Scope</strong>:</li>
+<li>Multi-node distributed tensor parallelism across multiple discrete servers.</li>
+<li>Weight quantization (e.g., INT4 AWQ/GPTQ) to avoid confounding weight noise with KV dynamics.</li>
+<li>Modifying vLLM internal CUDA kernels (vLLM is treated as a black-box System Under Test).</li>
+</ul>
+<h3>1.4 Frozen Acceptance Tests &amp; Success Criteria</h3>
+<ul>
+<li><strong>Milestone 1 (Capacity Verification)</strong>: Empirical validation of KV cache block expansion ratio ($R_{\text{gain}} \ge 1.95\times$) with zero preemption onset at moderate concurrency.</li>
+<li><strong>Milestone 2 (Crossover Determination $C^*$)</strong>: Identification of the exact concurrency threshold where latency speedup $S(C) \le 1.0$, and measurement of its shift under FP8.</li>
+<li><strong>Milestone 3 (Quality Pareto Frontier)</strong>: Demonstration that FP8 introduces $&lt; 1.0\%$ perplexity degradation and maintains statistical parity on downstream coding tasks.</li>
+</ul>
+<hr />
+<h2>2. Related Work, Baselines &amp; Alternatives</h2>
+<h3>2.1 Related Literature &amp; Systems</h3>
+<ul>
+<li><strong>PagedAttention &amp; vLLM</strong> (Kwon et al., SOSP 2023): Introduced virtual memory paging for the KV cache, reducing internal and external fragmentation from $&gt;60\%$ to $&lt;4\%$. Our work builds on vLLM's production PagedAttention architecture.</li>
+<li><strong>FP8 Quantization in Serving</strong> (Micikevicius et al., 2022; Dettmers et al., 2023): Established that 8-bit floating-point (E4M3) preserves dynamic range better than INT8 for attention maps.</li>
+<li><strong>Speculative Decoding</strong> (Leviathan et al., ICML 2023; Chen et al., 2023): Formulated speculative rejection sampling, guaranteeing that verification preserves the exact target output distribution.</li>
+<li><strong>EAGLE</strong> (Li et al., ICML 2024): Speculative decoding with feature-level extrapolation, executing a lightweight single-layer transformer head.</li>
+</ul>
+<h3>2.2 Viable Approaches &amp; Selection</h3>
+<ol>
+<li><strong>Analytical Simulation / Queueing Models</strong>: Faster to simulate, but entirely misses GPU hardware realities: kernel launch overheads, CUDA graph playback boundaries, memory fragmentation under dynamic burstiness, and real PagedAttention eviction cascades.</li>
+<li><strong>Empirical Measurement Against Production SUT (Selected)</strong>: Deploying a real serving engine (<code>vLLM v0.32.0</code>) driven by a closed-loop asynchronous benchmarking harness with real hardware telemetry scraping.</li>
+</ol>
+<h3>2.3 Working Baseline</h3>
+<ul>
+<li><strong>Baseline Engine</strong>: Vanilla <code>vLLM</code> with FP16 KV Cache (<code>kv_cache_dtype=auto</code>) and no speculation (<code>speculation=none</code>).</li>
+</ul>
+<hr />
+<h2>3. Architecture &amp; Implementation</h2>
+<h3>3.1 Architectural Overview</h3>
+<p>The benchmark suite is organized into six strictly decoupled layers, cleanly isolating our evaluation infrastructure from the System Under Test:</p>
+<pre><code>┌───────────────────────────────────────────────────────────┐
+│ Layer 6: Analysis &amp; Reporting                             │
+│ (Dual Crossover Detection, Knees, Publication Figures)    │
+└──────────────────────────▲────────────────────────────────┘
+                           │ Results JSONL
+┌──────────────────────────┴────────────────────────────────┐
+│ Layer 5: Benchmark Orchestrator &amp; Experiment Controller   │
+│ (Lifecycle management, Warmups, Parameter Grid Sweeper)   │
+└───────────────▲───────────────────────────▲───────────────┘
+                │                           │
+┌───────────────┴───────────────┐ ┌─────────┴───────────────┐
+│ Layer 4: Load Client          │ │ Layer 3: Telemetry &amp;    │
+│ (Async HTTP, Streaming TTFT/  │ │ Prometheus Scraper      │
+│ TPOT Latency Timestamps)      │ │ (VRAM, Preemptions, NVML)│
+└───────────────▲───────────────┘ └─────────▲───────────────┘
+                │ HTTP POST /v1/completions │ GET /metrics
+┌───────────────┴───────────────────────────┴───────────────┐
+│ Layer 2: System Under Test (SUT) — vLLM v0.32.0 Engine    │
+│ (PagedAttention Block Pool, CUDA Graph Replay, FlashAttn) │
+└──────────────────────────▲────────────────────────────────┘
+                           │ Weights &amp; Tensors
+┌──────────────────────────┴────────────────────────────────┐
+│ Layer 1: Hardware &amp; Runtime (CUDA 12.4, 48 GB GPU)        │
+└───────────────────────────────────────────────────────────┘
+</code></pre>
+<h3>3.2 Component Responsibilities &amp; Interfaces</h3>
+<ul>
+<li><strong><code>llm_serving.config</code></strong>: Declarative YAML parser expanding multi-stage experimental grids into deterministic <code>ServerRun</code> parameters.</li>
+<li><strong><code>llm_serving.server</code></strong>: Lifecycle process manager responsible for spawning vLLM subprocesses, waiting for socket readiness, checking health endpoints, and performing graceful SIGTERM teardown.</li>
+<li><strong><code>llm_serving.load_client</code></strong>: Asynchronous closed-loop traffic generator based on <code>httpx</code>. Accurately logs monotonic timestamps for request dispatch, Time-to-First-Token (TTFT), and inter-token arrival times (TPOT).</li>
+<li><strong><code>llm_serving.telemetry</code></strong>: Non-invasive telemetry collector scraping vLLM's <code>/metrics</code> Prometheus endpoint and NVML hardware state to record allocated KV blocks, queue depth, and preemption counts.</li>
+<li><strong><code>llm_serving.quality_eval</code></strong>: Evaluation harness computing token-weighted negative log-likelihood (NLL) directly through <code>/v1/completions</code> using vLLM's <code>prompt_logprobs</code>, and driving HumanEval functional evaluation.</li>
+<li><strong><code>llm_serving.analysis</code></strong>: Aggregator calculating median latencies, throughput knees, and identifying dual crossover points ($C^<em>_{\text{TPOT}}$ and $C^</em>_{\text{TPS}}$).</li>
+</ul>
+<hr />
+<h2>4. Methodology &amp; Experiment Setup</h2>
+<h3>4.1 Evaluation Questions</h3>
+<ol>
+<li><strong>EQ1 (Capacity)</strong>: By what factor does FP8 KV cache expand the physical PagedAttention block pool, and how does this alter the concurrency ceiling before preemption?</li>
+<li><strong>EQ2 (Crossover Shift)</strong>: How does doubling KV capacity via FP8 shift the speculative decoding crossover threshold $C^*$ for N-gram, EAGLE, and independent draft models?</li>
+<li><strong>EQ3 (Quality)</strong>: Does FP8 KV cache introduce statistically significant quality degradation in token likelihood or multi-step functional code synthesis?</li>
+<li><strong>EQ4 (Prefix Synergy)</strong>: How does FP8 interact with automatic prefix caching when serving multi-turn prompts with shared prefixes?</li>
+</ol>
+<h3>4.2 Hardware &amp; Software Specifications</h3>
+<ul>
+<li><strong>GPU</strong>: 1x NVIDIA Enterprise GPU (48 GB VRAM, 47.27 GiB physical addressable, e.g., RTX 6000 Ada / A40).</li>
+<li><strong>Base Model</strong>: <code>meta-llama/Meta-Llama-3-8B-Instruct</code> (14.96 GiB weights in BF16).</li>
+<li><strong>Draft Models</strong>: <code>yuhuili/EAGLE-LLaMA3-Instruct-8B</code> (EAGLE head), <code>meta-llama/Llama-3.2-1B-Instruct</code> (1B draft model).</li>
+<li><strong>Software Stack</strong>: Linux Ubuntu 22.04, Python 3.12, PyTorch 2.4.0, CUDA 12.4, <code>vllm v0.32.0</code>, <code>lm-eval v0.4.4</code>.</li>
+<li><strong>Serving Parameters</strong>: <code>gpu_memory_utilization = 0.90</code>, <code>max_num_seqs = 256</code>, <code>max_model_len = 8192</code>.</li>
+</ul>
+<h3>4.3 Five-Stage Experimental Grid</h3>
+<ul>
+<li><strong>Stage 1 (KV Capacity Baseline)</strong>: Synthetic workload; $\text{ctx} \in [512, 2048, 7680]$; $C \in [1, 4, 16, 64, 256]$; FP16 vs. FP8; no speculation.</li>
+<li><strong>Stage 2 (Quality Evaluation)</strong>: WikiText-2 ($491\text{k}$ tokens, 64 windows/tier); HumanEval (all 164 coding tasks).</li>
+<li><strong>Stage 3 (FP16 Speculative Sweep)</strong>: Corpus workload; $\text{ctx}=2048$; $C \in [1, 256]$; Baseline vs. N-gram vs. EAGLE vs. Draft 1B.</li>
+<li><strong>Stage 4 (FP8 Speculative Sweep)</strong>: Identical to Stage 3, but with <code>kv_cache_dtype=fp8</code>.</li>
+<li><strong>Stage 5 (Prefix Caching Synergy)</strong>: 50% shared prompt prefix; $\text{ctx}=2048$; $C \in [1, 32, 256]$; Prefix caching enabled.</li>
+</ul>
+<hr />
+<h2>5. Results, Observations &amp; Analysis</h2>
+<h3>5.1 Stage 1: KV Capacity Expansion &amp; Preemption Collapse</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Metric</th>
+<th style="text-align: center;">FP16 Baseline (<code>auto</code>)</th>
+<th style="text-align: center;">FP8 Quantized (<code>fp8</code>)</th>
+<th style="text-align: center;">Impact / Multiplier</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Allocated KV Blocks</strong></td>
+<td style="text-align: center;">$13,249\text{ blocks}$</td>
+<td style="text-align: center;"><strong>$26,099\text{ blocks}$</strong></td>
+<td style="text-align: center;"><strong>$1.970\times$ Capacity Gain</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Available Cache Tokens</strong></td>
+<td style="text-align: center;">$211,984\text{ tokens}$</td>
+<td style="text-align: center;"><strong>$417,584\text{ tokens}$</strong></td>
+<td style="text-align: center;">$+205,600\text{ tokens}$</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Preemptions at $C=256, \text{ctx}=2048$</strong></td>
+<td style="text-align: center;"><strong>$35\text{ evictions}$</strong></td>
+<td style="text-align: center;"><strong>$0\text{ evictions}$</strong></td>
+<td style="text-align: center;"><strong>Eliminates Thrashing</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>TTFT p99 at $C=256, \text{ctx}=2048$</strong></td>
+<td style="text-align: center;">$73,523\text{ ms}$ ($73.5\text{ s}$)</td>
+<td style="text-align: center;"><strong>$1,834\text{ ms}$</strong> ($1.8\text{ s}$)</td>
+<td style="text-align: center;"><strong>$40.1\times$ Latency Reduction</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Peak Throughput at $\text{ctx}=2048$</strong></td>
+<td style="text-align: center;">$857.2\text{ tok/s}$ ($C=64$)</td>
+<td style="text-align: center;"><strong>$1,136.5\text{ tok/s}$</strong> ($C=256$)</td>
+<td style="text-align: center;"><strong>$+45.3\%$ Throughput Gain</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Long-Context Wall ($\text{ctx}=7680$)</strong></td>
+<td style="text-align: center;">Knee at $C=16$ ($220.4\text{ tok/s}$)</td>
+<td style="text-align: center;">Knee at $C=64$ ($296.1\text{ tok/s}$)</td>
+<td style="text-align: center;"><strong>$4.0\times$ Load Range Shift</strong></td>
+</tr>
+</tbody>
+</table>
+<pre><code>Throughput Collapse Observation (ctx=2048):
+FP16: C=64 (857.2 tok/s) ──&gt; C=256 (779.9 tok/s) [COLLAPSE: -8.8%, 35 Preemptions, TTFT p99=73.5s]
+FP8:  C=64 (1024.2 tok/s) ─&gt; C=256 (1136.4 tok/s) [STABLE: +10.9%, 0 Preemptions, TTFT p99=1.8s]
+</code></pre>
+<p>Under FP16 at $C=256$, total token demand ($256 \times 2048 = 524,288\text{ tokens}$) exceeds the physical pool ($211,984\text{ tokens}$), forcing vLLM to abort active sequences, evict their KV blocks, and recompute them from scratch. FP8 raises the pool to $417,584\text{ tokens}$, completely preventing memory thrashing.</p>
+<hr />
+<h3>5.2 Stages 3 &amp; 4: Speculative Crossover Shifts ($C^*$)</h3>
+<p>Auxiliary speculative models impose a direct <strong>"Speculator KV Block Tax"</strong> by consuming GPU memory that would otherwise hold KV blocks:
+* <strong>N-gram</strong>: Consumes 0 parameters; KV blocks = $13,210$ ($-0.3\%$).
+* <strong>EAGLE Head</strong>: Consumes single transformer layer; KV blocks = $11,869$ ($-10.4\%$).
+* <strong>Draft Model (Llama-3.2-1B)</strong>: Consumes 1B parameters; KV blocks = $9,618$ (<strong>$-27.4\%$ Tax</strong>).</p>
+<h4>Dual Crossover Analysis Table ($\text{ctx}=2048$, Corpus Workload)</h4>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Speculation Method</th>
+<th style="text-align: center;">KV Precision</th>
+<th style="text-align: center;">$S_{\text{TPOT}} (C=1)$</th>
+<th style="text-align: center;">$S_{\text{TPOT}} (C=256)$</th>
+<th style="text-align: center;">$C^*_{\text{TPOT}}$ (Latency)</th>
+<th style="text-align: center;">$C^*_{\text{TPS}}$ (Goodput)</th>
+<th style="text-align: center;">Outcome / Regime Shift</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>EAGLE</strong></td>
+<td style="text-align: center;"><strong>FP16</strong></td>
+<td style="text-align: center;">$1.01\times$</td>
+<td style="text-align: center;">$0.97\times$</td>
+<td style="text-align: center;"><strong>$16.6$</strong></td>
+<td style="text-align: center;"><strong>$8.0$</strong></td>
+<td style="text-align: center;">Inverts above $C=16$</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>EAGLE</strong></td>
+<td style="text-align: center;"><strong>FP8</strong></td>
+<td style="text-align: center;">$1.08\times$</td>
+<td style="text-align: center;">$1.32\times$</td>
+<td style="text-align: center;"><strong>$43.6$</strong></td>
+<td style="text-align: center;"><strong>$13.4$</strong></td>
+<td style="text-align: center;"><strong>$+2.60\times$ Range Expansion</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>N-gram</strong></td>
+<td style="text-align: center;"><strong>FP16</strong></td>
+<td style="text-align: center;">$1.09\times$</td>
+<td style="text-align: center;">$0.83\times$</td>
+<td style="text-align: center;"><strong>$25.9$</strong></td>
+<td style="text-align: center;"><strong>$10.3$</strong></td>
+<td style="text-align: center;">Penalizes throughput by $-17.1\%$</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>N-gram</strong></td>
+<td style="text-align: center;"><strong>FP8</strong></td>
+<td style="text-align: center;">$1.22\times$</td>
+<td style="text-align: center;">$1.23\times$</td>
+<td style="text-align: center;"><strong>No Cross</strong></td>
+<td style="text-align: center;"><strong>$15.0$</strong></td>
+<td style="text-align: center;">Eliminates throughput penalty</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Draft Model 1B</strong></td>
+<td style="text-align: center;"><strong>FP16</strong></td>
+<td style="text-align: center;">$1.51\times$</td>
+<td style="text-align: center;">$1.44\times$</td>
+<td style="text-align: center;"><strong>No Cross</strong></td>
+<td style="text-align: center;"><strong>$24.5$</strong></td>
+<td style="text-align: center;">High $\alpha=52.5\%$; latency speedup sustained</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Draft Model 1B</strong></td>
+<td style="text-align: center;"><strong>FP8</strong></td>
+<td style="text-align: center;">$1.34\times$</td>
+<td style="text-align: center;">$2.15\times$</td>
+<td style="text-align: center;"><strong>No Cross</strong></td>
+<td style="text-align: center;"><strong>$25.1$</strong></td>
+<td style="text-align: center;">Admission controller throttles batch</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Scientific Insight (The $S_{\text{TPOT}}$ vs. $S_{\text{TPS}}$ Paradox at $C=256$)</strong>:<br />
+Under FP8 with <code>draft_model</code>, per-stream latency shows massive speedup ($S_{\text{TPOT}} = 2.15\times$), yet system throughput drops ($S_{\text{TPS}} = 0.80\times$). Because the 1B draft model incurs a $27.4\%$ VRAM tax, vLLM's admission controller reduces the maximum active concurrent batch size and queues the remaining requests. The admitted requests stream tokens rapidly, but total system goodput declines because Tensor Cores are under-utilized.</p>
+<hr />
+<h3>5.3 Stage 2: Quality Preservation &amp; Functional Correctness</h3>
+<h4>1. Language Modeling Token Likelihood (WikiText-2 Perplexity over $491,456$ Tokens)</h4>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Context Length</th>
+<th style="text-align: center;">FP16 Perplexity (<code>auto</code>)</th>
+<th style="text-align: center;">FP8 Perplexity (<code>fp8</code>)</th>
+<th style="text-align: center;">Absolute $\Delta$</th>
+<th style="text-align: center;">Relative $\Delta$</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><strong>$512$</strong></td>
+<td style="text-align: center;">$10.8357$</td>
+<td style="text-align: center;">$10.8548$</td>
+<td style="text-align: center;">$+0.0191$</td>
+<td style="text-align: center;"><strong>$+0.18\%$</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;"><strong>$2048$</strong></td>
+<td style="text-align: center;">$8.2412$</td>
+<td style="text-align: center;">$8.2629$</td>
+<td style="text-align: center;">$+0.0217$</td>
+<td style="text-align: center;"><strong>$+0.26\%$</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;"><strong>$4096$</strong></td>
+<td style="text-align: center;">$7.6858$</td>
+<td style="text-align: center;">$7.7034$</td>
+<td style="text-align: center;">$+0.0176$</td>
+<td style="text-align: center;"><strong>$+0.23\%$</strong></td>
+</tr>
+<tr>
+<td style="text-align: center;"><strong>$7680$</strong></td>
+<td style="text-align: center;">— <em>(OOM on FP16)</em></td>
+<td style="text-align: center;"><strong>$7.5564$</strong></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;"><strong>Stable</strong></td>
+</tr>
+</tbody>
+</table>
+<h4>2. Downstream Code Reasoning (Full HumanEval Benchmark — $164$ Problems)</h4>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">Metric</th>
+<th style="text-align: center;">FP16 Baseline (<code>auto</code>)</th>
+<th style="text-align: center;">FP8 Quantized (<code>fp8</code>)</th>
+<th style="text-align: center;">Delta</th>
+<th style="text-align: center;">Statistical Confidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;"><strong>Solved Problems</strong></td>
+<td style="text-align: center;"><strong>$98 / 164$</strong></td>
+<td style="text-align: center;"><strong>$96 / 164$</strong></td>
+<td style="text-align: center;"><strong>$-2$ problems</strong></td>
+<td style="text-align: center;">Within Standard Error</td>
+</tr>
+<tr>
+<td style="text-align: center;"><strong><code>pass@1</code></strong></td>
+<td style="text-align: center;"><strong>$59.76\%$</strong></td>
+<td style="text-align: center;"><strong>$58.54\%$</strong></td>
+<td style="text-align: center;"><strong>$-1.22\%$</strong></td>
+<td style="text-align: center;">$\sigma = \pm 3.85\%$</td>
+</tr>
+</tbody>
+</table>
+<p>Because the $-1.22\%$ delta is well below the standard error ($\sigma = \pm 3.85\%$), the functional difference between FP16 and FP8 is statistically indistinguishable from random sampling variance.</p>
+<hr />
+<h3>5.4 Stage 5: Prefix Caching Synergy</h3>
+<p>When serving prompts sharing a 50% system prefix at $C=256$:
+* <strong>FP16 Vanilla</strong>: $779.9\text{ tok/s}$
+* <strong>FP16 + Prefix Caching</strong>: $1,263.7\text{ tok/s}$ ($+62.0\%$)
+* <strong>FP8 + Prefix Caching</strong>: <strong>$1,905.7\text{ tok/s}$</strong> (<strong>$+144.4\%$ over vanilla baseline</strong>, $+50.8\%$ over FP16+PC)</p>
+<hr />
+<h2>8. Current State, Limitations &amp; Risks</h2>
+<h3>8.1 Working Features</h3>
+<ul>
+<li>Complete, automated end-to-end benchmark execution pipeline (<code>llm-serving run</code>, <code>llm-serving quality</code>, <code>llm-serving analyze</code>).</li>
+<li>Automated mock test environment (<code>--backend mock</code>) enabling pipeline verification on commodity CPU machines.</li>
+<li>Dual crossover curve fitting and regime map generation.</li>
+<li>Fully populated dataset (156 benchmark runs + 7 perplexity checkpoints + 2 HumanEval evaluations).</li>
+</ul>
+<h3>8.2 Known Limitations &amp; Constraints</h3>
+<ul>
+<li><strong>Single-Node Focus</strong>: Experiments were conducted on a single 48 GB GPU. Inter-GPU NVLink communication overheads in tensor-parallel configurations (TP=2, TP=4) were not measured.</li>
+<li><strong>Model Scale</strong>: Evaluated on 8B parameter models. While architectural scaling laws indicate similar roofline shifts on 70B models, 70B requires multi-GPU nodes.</li>
+<li><strong>Static Context Distributions</strong>: Workload generation used uniform context length buckets rather than log-normal real-world conversational distributions.</li>
+</ul>
+<hr />
+<h2>9. Way Forward (Future Research Roadmap)</h2>
+<ol>
+<li><strong>Dynamic Runtime Speculation Switching (Next Immediate Task)</strong>:</li>
+<li><em>Objective</em>: Implement an adaptive middleware policy in vLLM that continuously monitors queue depth and automatically deactivates speculative heads when $C &gt; C^*_{\text{TPS}}$.</li>
+<li><em>Target</em>: Prevent the $-17\%$ to $-20\%$ goodput degradation observed at high load.</li>
+<li><strong>Characterization of FP4 / INT4 Micro-Scaling KV Formats</strong>:</li>
+<li><em>Objective</em>: Extend the benchmark suite to evaluate upcoming Blackwell and Hopper FP4 E2M1 KV cache formats.</li>
+<li><em>Done When</em>: Verify whether FP4 achieves a $3.8\times$ capacity gain and identify the precision floor where code generation degrades.</li>
+<li><strong>Disaggregated Prefill-Decode Serving Evaluation</strong>:</li>
+<li><em>Objective</em>: Separate the serving cluster into dedicated prefill nodes (compute-heavy, FP16) and decode nodes (memory-bound, FP8 + speculative decoding).</li>
+</ol>
+<hr />
+<h2>10. Contributions, AI Use &amp; Attribution</h2>
+<h3>10.1 Individual Contribution &amp; Technical Ownership</h3>
+<ul>
+<li><strong>Mridul Pant (<code>cs24mtech15009</code>)</strong>: Designed the experimental research methodology, developed the 6-layer benchmark orchestrator, implemented the Prometheus telemetry scraper and async closed-loop load client, executed all 156 benchmark sweeps on cloud GPU hardware, developed the dual crossover analysis algorithms, and authored the technical documentation.</li>
+</ul>
+<h3>10.2 Use of AI Assistance</h3>
+<ul>
+<li>Generative AI assistants (Google Antigravity / Gemini) were utilized for drafting boilerplate unit test mocks, formatting KaTeX equations, and scaffolding matplotlib visual styling. All benchmark data, telemetry extraction routines, analytical interpretations, and conclusions were independently designed, verified, and validated against empirical logs.</li>
+</ul>
+<h3>10.3 Third-Party Assets &amp; Attribution</h3>
+<ul>
+<li><strong>vLLM</strong> (<code>v0.32.0</code>, Apache-2.0): Core inference engine and PagedAttention implementation.</li>
+<li><strong>EleutherAI LM-Evaluation-Harness</strong> (<code>v0.4.4</code>, MIT): Evaluation framework for HumanEval and MMLU.</li>
+<li><strong>Meta AI</strong>: Model weights for <code>Meta-Llama-3-8B-Instruct</code> and <code>Llama-3.2-1B-Instruct</code> (Llama 3 Community License).</li>
+<li><strong>EAGLE Authors</strong>: Pretrained speculative feature head (<code>yuhuili/EAGLE-LLaMA3-Instruct-8B</code>, Apache-2.0).</li>
+</ul>
+<hr />
+<h2>References</h2>
+<ol>
+<li>Kwon, W., et al. "Efficient Memory Management for Large Language Model Serving with PagedAttention." <em>Proceedings of the ACM SIGOPS Symposium on Operating Systems Principles (SOSP)</em>, 2023.</li>
+<li>Leviathan, Y., Kalman, M., &amp; Matias, Y. "Fast Inference from Transformers via Speculative Decoding." <em>International Conference on Machine Learning (ICML)</em>, 2023.</li>
+<li>Li, Y., et al. "EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty." <em>International Conference on Machine Learning (ICML)</em>, 2024.</li>
+<li>Chen, C., et al. "Accelerating Large Language Model Decoding with Speculative Sampling." <em>arXiv preprint arXiv:2302.01318</em>, 2023.</li>
+<li>Micikevicius, P., et al. "FP8 Formats for Deep Learning." <em>arXiv preprint arXiv:2209.05433</em>, 2022.</li>
+<li>Williams, S., Waterman, A., &amp; Patterson, D. "Roofline: An Insightful Visual Performance Model for Multicore Architectures." <em>Communications of the ACM</em>, 2009.</li>
+</ol>
+</body>
+</html>

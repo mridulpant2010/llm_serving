@@ -38,8 +38,8 @@ This project delivers an end-to-end empirical benchmark suite and theoretical fr
    - EAGLE crossover point shifts from **$C^* = 16.9 \rightarrow 43.9$ ($+2.60\times$)**!
    - N-gram crossover penalty is completely eliminated inside the tested concurrency range.
 5. **Zero-Degradation Quality Verification**:
-   - Evaluated on WikiText-2 across $491,456$ tokens.
-   - Relative perplexity degradation is strictly bounded under **$0.26\%$** across context lengths ($512$ to $7680$ tokens).
+   - **WikiText-2 Perplexity**: Evaluated across $491,456$ tokens. Relative perplexity degradation is strictly bounded under **$0.26\%$** across context lengths ($512$ to $7680$ tokens).
+   - **Downstream Code Generation (HumanEval)**: Evaluated over all **164 problems**; FP8 achieves **$58.54\%$** vs. FP16 **$59.76\%$** ($-1.22\%$ delta, strictly within the $\pm 3.85\%$ standard error margin).
 6. **Prefix Caching & Radix Attention Synergy**:
    - Combining FP8 KV cache with Prefix Caching pushes serving throughput to **$1,905.7\text{ tok/s}$** ($+144.4\%$ over vanilla FP16).
 
@@ -52,7 +52,7 @@ This project delivers an end-to-end empirical benchmark suite and theoretical fr
 | **Figure 1** | Throughput Knees & Thrashing Collapse ($\text{ctx} \in \{512, 2048, 7680\}$) | `results_budget/report/figure1_kv_throughput_knee.png` |
 | **Figure 2** | Speculative Crossover ($C^*$) Dual-Panel ($S_{\text{TPOT}}$ vs. $S_{\text{TPS}}$) | `results_budget/report/figure2_speculative_crossover.png` |
 | **Figure 3** | PagedAttention Concurrency Limits & Speculator KV Block Tax | `results_budget/report/figure3_kv_capacity_gain.png` |
-| **Figure 4** | Quality (WikiText-2 Perplexity) & Prefix Caching Synergy | `results_budget/report/figure4_quality_and_prefix_synergy.png` |
+| **Figure 4** | Quality (WikiText-2 Perplexity + HumanEval) & Prefix Caching Synergy | `results_budget/report/figure4_quality_and_prefix_synergy.png` |
 
 ---
 
@@ -60,9 +60,13 @@ This project delivers an end-to-end empirical benchmark suite and theoretical fr
 
 ```
 llm_serving/
+├── docs/
+│   ├── Project_Report.md              # Full 10-section final project report
+│   └── Architecture_Decision_Records.md # ADR log (including mandatory 9 Oct record)
 ├── configs/
 │   ├── budget.yaml          # Standard $5 budget benchmark matrix (12 stages)
 │   ├── experiments.yaml     # Full production matrix across multi-repetition sweeps
+│   ├── extra.yaml           # Fine-grained follow-up matrix
 │   └── pilot.yaml           # Fast sanity-check config (1-2 minutes)
 ├── src/llm_serving/
 │   ├── __init__.py
@@ -71,13 +75,15 @@ llm_serving/
 │   ├── load_client.py       # Asynchronous closed-loop load generator (TTFT, TPOT, E2E)
 │   ├── mock_server.py       # Deterministic CPU mock server for testing without GPU
 │   ├── orchestrator.py      # Experiment runner, server lifecycle manager & resume logic
-│   ├── quality_eval.py      # WikiText-2 Perplexity evaluation via /v1/completions
+│   ├── quality_eval.py      # Perplexity and HumanEval evaluation via vLLM
 │   ├── server.py            # vLLM background API server lifecycle and log scraper
 │   ├── telemetry.py         # Prometheus metrics scraping & NVML GPU telemetry
 │   ├── workload.py          # Synthetic, WikiText-2 corpus, and Shared-Prefix workloads
 │   └── analysis.py          # Data aggregation, C* crossover finder, and figure plotter
 ├── scripts/
 │   ├── generate_publication_charts.py  # Standalone 300-DPI publication chart generator
+│   ├── run_humaneval.py               # Automated HumanEval 164-task evaluation script
+│   ├── collect_remaining.sh           # Step-by-step orchestrator for follow-up runs
 │   ├── prepare_corpus.py              # Auto-downloads and cleans WikiText-2 test set
 │   ├── run_experiments.sh             # Master execution script for Vast.ai / RunPod
 │   └── setup_server.sh                # System dependencies, PyTorch, vLLM installer
@@ -86,8 +92,10 @@ llm_serving/
 │   └── test_pipeline_mock.py# 4 end-to-end integration tests using MockServer
 ├── results_budget/          # Complete empirical dataset (156 runs, quality logs & report)
 │   ├── results.jsonl        # Raw line-by-line benchmark measurements
-│   ├── quality.jsonl        # Raw perplexity evaluations
+│   ├── quality.jsonl        # Raw perplexity and HumanEval evaluations
+│   ├── lm_eval/             # Raw HumanEval task execution JSON outputs
 │   └── report/              # Generated markdown summary, json, and figures
+├── .env.example             # Safe template for environment variables (HF_TOKEN)
 ├── pyproject.toml           # Packaging, dependencies, and CLI entrypoint definition
 └── README.md
 ```
@@ -147,8 +155,10 @@ python scripts/generate_publication_charts.py
 
 ---
 
-## 6. Citation & Defense Artifacts
+## 6. Official Submission & Defense Artifacts
 
-Detailed academic analysis, mathematical derivations, and defense slide decks are located in:
-- [`empirical_experiment_analysis.md`](empirical_experiment_analysis.md)
-- `Balancing Memory and Compute in LLM Serving.pptx`
+Detailed academic analysis, mathematical derivations, decision records, and final reports:
+- **Project Report**: [`docs/Project_Report.md`](docs/Project_Report.md)
+- **Architecture Decision Records (ADRs)**: [`docs/Architecture_Decision_Records.md`](docs/Architecture_Decision_Records.md)
+- **Comprehensive Empirical Analysis**: [`empirical_experiment_analysis.md`](empirical_experiment_analysis.md)
+- **Presentation Deck**: `Balancing Memory and Compute in LLM Serving.pptx`
