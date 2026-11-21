@@ -72,8 +72,8 @@ stages:
     concurrency: [8, 32, 128]
     prefix_caching: false
 
-  # (3) OPTIONAL clean re-run of the FP8 speculation sweep (stage 4) and FP16 EAGLE,
-  #     3 repeats, with real telemetry (TTFT, power, KV usage).
+  # (3) CLEAN RE-RUN of only the rows that were rebuilt from run.log (3 repeats, raw telemetry).
+  #     Stage 4 (FP8): all four settings were rebuilt -> re-run all, with its own FP8 baseline.
   stage4r_spec_fp8:
     workload: corpus
     kv_dtypes: [fp8]
@@ -82,10 +82,24 @@ stages:
     concurrency: [1, 4, 16, 64, 256]
     prefix_caching: false
 
-  stage3r_eagle_fp16:
+  #     Stage 3 (FP16): EAGLE (all rebuilt) and the draft model (C=256 rebuilt), plus the FP16
+  #     baseline as a calibration anchor against the original raw stage-3 baseline.
+  #     N-gram FP16 is raw in the original data and is not re-run.
+  stage3r_spec_fp16:
     workload: corpus
     kv_dtypes: [auto]
-    speculation: [none, eagle]
+    speculation: [none, draft_model, eagle]
     context_lengths: [2048]
     concurrency: [1, 4, 16, 64, 256]
     prefix_caching: false
+
+  # (4) OPTIONAL: stage 5 re-run (cache ON; its 12 rows were rebuilt). Run together with
+  #     stage5c_prefix_control (cache OFF) to isolate the cache's own effect.
+  stage5r_prefix_on:
+    workload: shared_prefix
+    workload_args: {shared_prefix_fraction: 0.5}
+    kv_dtypes: [auto, fp8]
+    speculation: [none]
+    context_lengths: [2048]
+    concurrency: [1, 32, 256]
+    prefix_caching: true
