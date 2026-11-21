@@ -20,16 +20,16 @@ This project delivers an end-to-end empirical benchmark suite and theoretical fr
 
 ## 2. Key Empirical Findings
 
-Llama-3-8B-Instruct on one RTX PRO 5000 Blackwell (vLLM 0.32.0), 152 successful runs, 2 repeats. Every number is recomputed from `results_budget/results.jsonl` by `evaluation/make_analysis.py`. Details and caveats: [`docs/Project_Report.md`](docs/Project_Report.md).
+Llama-3-8B-Instruct on one RTX PRO 5000 Blackwell (vLLM 0.32.0). 221 measured rows: Stage 1 (60 rows) and the FP16 N-gram sweep (20 rows) from the first run, 141 rows from a clean re-run on 21 November 2026 (3 repeats). Every number is recomputed by `evaluation/make_analysis.py` from `results_final/results.jsonl`. Details and caveats: [`docs/Project_Report.md`](docs/Project_Report.md).
 
-1. **KV capacity**: FP8 grows the KV pool from 13,249 to 26,099 blocks (**1.97x**).
-2. **FP8 under load (C=256)**: throughput +45% at ctx 2,048 (782 to 1,137 tok/s) and +38% at ctx 7,680 (219 to 302). Preemptions fall from 35 to 9 at ctx 2,048 and from 19 to 0 at ctx 7,680. Mean request latency falls 31% and 27%. Per-token latency (TPOT p50) rises 30% and 48%, because the batch is larger. Peak to peak at ctx 2,048 the gain is +33%.
-3. **Speculation pays only at low concurrency**: every method helps at C=1 and 4, the draft model to about C=16, and all lose from C=64. From C=64 the best configuration is FP8 without speculation. This is read from five measured concurrency levels, so no interpolated crossover is quoted.
+1. **KV capacity**: FP8 grows the KV pool from 13,249 to 26,099 blocks (**1.97x**); the re-run reproduces it (13,246 to 26,092).
+2. **FP8 under load (C=256)**: throughput +45% at ctx 2,048 (782 to 1,137 tok/s) and +38% at ctx 7,680 (219 to 302). Preemptions fall from 35 to 9 at ctx 2,048 and from 19 to 0 at ctx 7,680. Mean request latency falls 31% and 27%. Per-token latency (TPOT p50) rises 30% and 48%, because the batch is larger.
+3. **Speculation pays only at the lowest loads, and FP8 does not rescue it**: with FP16 the draft model gives 1.50x at C=1 and 1.35x at C=4, parity at C=16, and every method loses from C=64. With FP8 the draft model gives only 1.03x at C=1. From C=16 the best configuration is FP8 without speculation (603, 1,009 and 1,122 tok/s at C=16, 64 and 256). No interpolated crossover is quoted (five concurrency levels).
 4. **Speculator KV tax**: the draft model takes 27% of the KV pool, EAGLE 10%, N-gram 0.3%.
 5. **Quality**: FP8 raises WikiText-2 perplexity by at most 0.26% (contexts 512 to 4,096). HumanEval: 98/164 (FP16) versus 96/164 (FP8), within noise at this sample size. FP16 failed at ctx 7,680, so that tier has no pair. **MMLU was not run.**
-6. **Prefix caching**: with the cache on, FP8 reaches 1,906 tok/s versus 1,264 for FP16 (+51%). The cache's own effect is **not measured** (no cache-off control).
+6. **Prefix caching (cache-off control run)**: at C=256 the cache adds +63% (FP16: 766 to 1,247 tok/s) and +68% (FP8: 1,124 to 1,888). FP8 over FP16 is +47% with the cache off and +51% with it on, so most of FP8's gain is capacity.
 
-**Known limits:** 64 of 156 rows (Stage 3 draft model C=256 and EAGLE, all of Stages 4 and 5) were rebuilt from `run.log` after a truncated download, with placeholder telemetry (only throughput, TPOT, KV blocks, preemptions and acceptance are used), 2 repeats, 5 concurrency levels. Most code was written with AI assistance; see the report, section 10. Follow-up runs are specified in `configs/extra.yaml` and `scripts/collect_remaining.sh`.
+**Known limits:** 3 repeats in the re-run and 2 in Stage 1 and FP16 N-gram, 5 concurrency levels, two rented instances (FP16 baselines agree within 2%), no MMLU, no finer grid, one context length for speculation. The first run's `results.jsonl` was truncated and 64 rows were rebuilt from `run.log` with placeholder telemetry; they are **not used** (the re-run replaced them; 29 of 32 comparable cells agree within 5%, but the FP8 draft model at C=1, 4, 16 was overstated by 10-19%). They stay in `results_budget/` for transparency. Most code was written with AI assistance; see the report, section 10.
 
 ---
 
@@ -41,6 +41,8 @@ Llama-3-8B-Instruct on one RTX PRO 5000 Blackwell (vLLM 0.32.0), 152 successful 
 | **Figure 2** | Speculative Crossover ($C^*$) Dual-Panel ($S_{\text{TPOT}}$ vs. $S_{\text{TPS}}$) | `results_budget/report/figure2_speculative_crossover.png` |
 | **Figure 3** | PagedAttention Concurrency Limits & Speculator KV Block Tax | `results_budget/report/figure3_kv_capacity_gain.png` |
 | **Figure 4** | Quality (WikiText-2 Perplexity + HumanEval) & Prefix Caching Synergy | `results_budget/report/figure4_quality_and_prefix_synergy.png` |
+
+The figures used in the report and the slides are `evaluation/output/01_*.png` to `11_*.png` (and `docs/figures/`). Figures 1 to 4 above are older draft figures from the first run; where they disagree with the report, the report is right.
 
 ---
 
@@ -78,11 +80,14 @@ llm_serving/
 ├── tests/
 │   ├── test_logic.py        # 20 unit tests for formulas, crossover math & config validation
 │   └── test_pipeline_mock.py# 4 end-to-end integration tests using MockServer
-├── results_budget/          # Complete empirical dataset (156 runs, quality logs & report)
+├── results_budget/          # First run (156 rows, 64 of them rebuilt and not used), quality logs
 │   ├── results.jsonl        # Raw line-by-line benchmark measurements
 │   ├── quality.jsonl        # Raw perplexity and HumanEval evaluations
 │   ├── lm_eval/             # Raw HumanEval task execution JSON outputs
-│   └── report/              # Generated markdown summary, json, and figures
+│   └── report/              # Older generated summary and figures (superseded by evaluation/output)
+├── results_extra/           # Clean re-run, 21 Nov 2026 (rows, run.log, server_logs/, env.txt, pip_freeze.txt)
+├── results_final/           # Merged analysis dataset built by evaluation/merge_results.py (+ rebuilt_vs_rerun.csv)
+├── evaluation/              # merge_results.py, make_analysis.py, make_regime_map.py, output/
 ├── .env.example             # Safe template for environment variables (HF_TOKEN)
 ├── pyproject.toml           # Packaging, dependencies, and CLI entrypoint definition
 └── README.md
@@ -129,7 +134,10 @@ bash scripts/run_experiments.sh budget
 # Run WikiText-2 quality evaluation
 llm-serving quality -c configs/budget.yaml --skip-lm-eval
 
-# Generate summary report and charts
+# Re-run of Stages 3-5 (3 repeats, cache-off control) on a second instance
+bash scripts/collect_remaining.sh rerun && bash scripts/collect_remaining.sh prefix
+
+# Generate the older summary report and charts
 llm-serving analyze --results results_budget/results.jsonl \
                     --quality results_budget/quality.jsonl \
                     --out results_budget/report
@@ -138,8 +146,9 @@ llm-serving analyze --results results_budget/results.jsonl \
 ### 5.4 Re-generating Figures and Tables
 
 ```bash
-python evaluation/make_analysis.py results_budget evaluation/output      # charts 01-10 + comparison_tables.xlsx
-python evaluation/make_regime_map.py results_budget evaluation/output    # chart 11 (regime map)
+python evaluation/merge_results.py results_budget results_extra results_final   # merged dataset
+python evaluation/make_analysis.py results_final evaluation/output      # charts 01-10 + comparison_tables.xlsx
+python evaluation/make_regime_map.py results_final evaluation/output    # chart 11 (regime map)
 python scripts/generate_publication_charts.py                            # older figures 1-4
 ```
 
@@ -152,3 +161,13 @@ Detailed academic analysis, mathematical derivations, decision records, and fina
 - **Architecture Decision Records (ADRs)**: [`docs/Architecture_Decision_Records.md`](docs/Architecture_Decision_Records.md)
 - **Evaluation scripts**: [`evaluation/`](evaluation/README.md)
 - **Environment template**: `.env.example` (never commit real tokens; the `vastai` key must not be tracked)
+
+---
+
+## 7. Historical planning documents
+
+The Markdown files in the repository root (`project_report.md`, `project_report_t2_t3.md`, `final_project_report.md`, `progress_report_design.md`, `experiment_coding_progress_report.md`, `project_analysis.md`, `subtopic_selection.md`, `system_design.md`, `system_design_first_principles.md`) are the planning and progress documents written during the project. They are kept because they are the evidence for the original plan (see ADR-001). **They are not the final results: where they disagree with `docs/Project_Report.md` or `docs/Architecture_Decision_Records.md`, the files in `docs/` are correct.**
+
+## 8. License
+
+MIT, see [`LICENSE`](LICENSE). Third-party models and datasets keep their own licences.

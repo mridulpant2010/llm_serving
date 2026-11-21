@@ -1,6 +1,7 @@
 import sys
 # usage: python evaluation/make_analysis.py [results_dir] [output_dir]
-U = (sys.argv[1] if len(sys.argv) > 1 else "results_budget").rstrip("/") + "/"
+# results_dir is the merged dataset written by evaluation/merge_results.py (default: results_final)
+U = (sys.argv[1] if len(sys.argv) > 1 else "results_final").rstrip("/") + "/"
 OUT = (sys.argv[2] if len(sys.argv) > 2 else "evaluation/output").rstrip("/") + "/"
 import json, re, os
 import numpy as np, pandas as pd
@@ -38,7 +39,9 @@ def save(fig, name, title, sub=None):
 # ---------- load ----------
 rows = [json.loads(l) for l in open(U + "results.jsonl") if l.strip()]
 df = pd.DataFrame([r for r in rows if r["status"] == "ok"])
-g = df.groupby(["stage", "kv_dtype", "spec", "workload", "context_len", "concurrency"])
+# the original FP16 no-speculation rows exist only to pair the original N-gram sweep; plots use the re-run baseline
+dfa = df[~((df.source == "original") & (df.spec == "none") & (df.stage == "stage3_spec_fp16"))]
+g = dfa.groupby(["stage", "kv_dtype", "spec", "workload", "context_len", "concurrency"])
 agg = g.agg(tps=("throughput_tps", "mean"), req=("req_throughput", "mean"), tpot=("tpot_ms_p50", "mean"),
             ttft=("ttft_ms_p50", "mean"), ttft99=("ttft_ms_p99", "mean"), pre=("srv_preemptions_delta", "mean"),
             runmax=("srv_running_max", "mean"), pw=("gpu_power_w_mean", "mean")).reset_index()
@@ -59,7 +62,7 @@ for kv in ["auto", "fp8"]:
         for c in sorted(d.concurrency.unique()):
             sT, sP = [], []
             for _, r in d[d.concurrency == c].iterrows():
-                b = base[(base.concurrency == c) & (base.rep == r.rep)].iloc[0]
+                b = base[(base.concurrency == c) & (base.rep == r.rep) & (base.source == r.source)].iloc[0]
                 sT.append(b.tpot_ms_p50 / r.tpot_ms_p50); sP.append(r.throughput_tps / b.throughput_tps)
             SPD.append(dict(kv=kv, spec=sp, C=c, S_tpot=np.mean(sT), S_tps=np.mean(sP),
                             tps_lo=min(sP), tps_hi=max(sP), tpot_lo=min(sT), tpot_hi=max(sT)))
@@ -83,17 +86,13 @@ for k, f in LOGS.items():
             a, d = int(m[1]), int(m[2]); p = np.array([float(x) for x in m[3].split(",")])
             A += a; D += d; pos += p * d; wsum += d
     LOGM[k] = dict(accepted=A, drafted=D, ratio=D / A, pos=pos / wsum, acc=A / D)
-blocks = {}
-cur = None
-for line in open(U + "run.log"):
-    m = re.match(r"=== \[\d+/12\] (\S+) ===", line)
-    if m: cur = m[1]
-    m = re.search(r"'num_gpu_blocks': (\d+)", line)
-    if m and cur: blocks[cur] = int(m[1])
-BL = {("auto", "none"): blocks["stage3_spec_fp16__kv-auto__spec-none__pc-0"],
-      ("fp8", "none"): blocks["stage4_spec_fp8__kv-fp8__spec-none__pc-0"]}
-for (kv, sp), f in LOGS.items():
-    BL[(kv, sp)] = blocks[f.replace(".log", "")]
+kvb = df[df.stage.isin(["stage3_spec_fp16", "stage4_spec_fp8"])].groupby(["kv_dtype", "spec", "source"]).kv_blocks.mean()
+BL = {}
+for (kv, sp), _ in list(LOGS.items()) + [(("auto", "none"), 0), (("fp8", "none"), 0)]:
+    src = "original" if (kv, sp) == ("auto", "ngram") else "rerun"
+    BL[(kv, sp)] = float(kvb[(kv, sp, src)])
+# original FP16 ngram pool is compared with the original FP16 baseline pool
+BL_ORIG_FP16_NONE = float(kvb[("auto", "none", "original")])
 
 def lab(ax, x, y, t, dy=0.0, **kw):
     ax.text(x, y + dy, t, ha=kw.pop("ha", "center"), va=kw.pop("va", "bottom"), fontsize=kw.pop("fontsize", 13), **kw)
@@ -163,7 +162,7 @@ axs[0].set_ylabel("Speculation speedup vs. no speculation (×)")
 axs[0].text(2.55, 1.04, "parity", fontsize=12, color=INK2, ha="right")
 fig.legend(handles=[Patch(facecolor="white", edgecolor=INK2, hatch="////", label="Per-token latency (TPOT) speedup"), Patch(color=INK2, label="System throughput (tok/s) speedup")],
            loc="center right", bbox_to_anchor=(.985, .86), ncol=2, fontsize=13)
-save(fig, "03_tpot_vs_throughput_c256.png", "At C=256, TPOT says speculation wins; throughput says it loses",
+save(fig, "03_tpot_vs_throughput_c256.png", "At C=256, TPOT can say speculation wins while throughput says it loses",
      "Speculator KV blocks shrink the pool, so fewer requests run at once: lower TPOT is a smaller-batch effect")
 
 # =====================================================================================
@@ -178,12 +177,12 @@ for ax, kv, nm in zip(axs, ["auto", "fp8"], ["FP16 KV cache", "FP8 KV cache"]):
         ax.fill_between(d.C, d.tps_lo, d.tps_hi, color=MCOL[sp], alpha=.18, lw=0)
         ax.plot(d.C, d.S_tps, "-o", color=MCOL[sp], lw=2.4, ms=7, mec="white", mew=1.5)
     ax.set_xscale("log", base=4); ax.set_xticks(Cs); ax.set_xticklabels(Cs); ax.minorticks_off(); ax.set_xlim(.8, 280)
-    ax.set_ylim(.7, 1.5); ax.set_title(nm, loc="left"); ax.set_xlabel("Concurrency (C)")
+    ax.set_ylim(.7, 1.6); ax.set_title(nm, loc="left"); ax.set_xlabel("Concurrency (C)")
     ax.text(1.0, .715, "speculation loses throughput", fontsize=12.5, color=INK2)
 axs[0].set_ylabel("Throughput speedup (×)")
 fig.legend(handles=[Line2D([], [], color=MCOL[m], lw=3, marker="o", label=MNAME[m]) for m in meths], loc="center right", bbox_to_anchor=(.985, .86), ncol=3, fontsize=13)
-save(fig, "04_throughput_speedup_vs_C.png", "Speculation pays only at low load; every method is below 1× by C=64",
-     "Band = min/max of 2 repeats · only five concurrency points were swept, so any C* is interpolated")
+save(fig, "04_throughput_speedup_vs_C.png", "Speculation pays only at low load, and FP8 weakens the draft model's gain",
+     "Band = min/max of 3 repeats (2 for FP16 N-gram) · five concurrency points, so no crossover C* is interpolated")
 
 # =====================================================================================
 # 5. Absolute throughput by config + winner strip
@@ -216,8 +215,8 @@ for c in Cs:
     col = MCOL[best[1]] if best[1] != "none" else (FP8 if best[0] == "fp8" else FP16)
     ax2.text(c, .35, f"{kvn}\n{spn}", ha="center", va="center", fontsize=13, fontweight="bold", color="white",
              bbox=dict(boxstyle="round,pad=.35", fc=col, ec="none"))
-save(fig, "05_throughput_by_config_and_winner.png", "FP8 is always on; speculation only helps below about C=16",
-     "Absolute throughput by configuration, ctx 2,048 · FP8 with no speculation wins from C=64 upward")
+save(fig, "05_throughput_by_config_and_winner.png", "Speculation wins only at C ≤ 4 (FP16 draft model); FP8 alone wins from C=16",
+     "Absolute throughput by configuration, ctx 2,048 · clean re-run, 3 repeats (FP16 N-gram from the original run, 2 repeats)")
 
 # =====================================================================================
 # 6. Speculator tax: KV pool + verification waste + per-position acceptance
@@ -300,23 +299,36 @@ save(fig, "08_model_validation.png", "Two first-principles models hold up agains
      "Decode is weight-streaming bound (≈1.2 TB/s effective); observed capacity is within 9% of the KV-pool prediction")
 
 # =====================================================================================
-# 9. Prefix caching
+# 9. Prefix caching (with the cache-off control from the clean re-run)
 # =====================================================================================
-fig, ax = plt.subplots(figsize=(W, H)); fig.subplots_adjust(left=.08, right=.97, top=.80, bottom=.15)
-ng16 = float(sp_ab[(sp_ab.kv_dtype == "auto") & (sp_ab.spec == "none") & (sp_ab.concurrency == 256)].tps.iloc[0])
-ng8 = float(sp_ab[(sp_ab.kv_dtype == "fp8") & (sp_ab.spec == "none") & (sp_ab.concurrency == 256)].tps.iloc[0])
-pc = agg[agg.stage == "stage5_prefix_ablation"]
-pc16 = float(pc[(pc.kv_dtype == "auto") & (pc.concurrency == 256)].tps.iloc[0]); pc8 = float(pc[(pc.kv_dtype == "fp8") & (pc.concurrency == 256)].tps.iloc[0])
-vals = [(ng16, FP16, True, "FP16\nno prefix cache\n(corpus workload)"), (pc16, FP16, False, "FP16\n+ prefix cache\n(shared-prefix)"),
-        (ng8, FP8, True, "FP8\nno prefix cache\n(corpus workload)"), (pc8, FP8, False, "FP8\n+ prefix cache\n(shared-prefix)")]
-for i, (v, col, hatch, t) in enumerate(vals):
-    ax.bar(i, v, .62, facecolor="white" if hatch else col, edgecolor=col, hatch="////" if hatch else None, lw=1.8)
-    ax.text(i, v + 35, f"{v:,.0f}", ha="center", fontsize=15, fontweight="bold")
-ax.set_xticks(range(4)); ax.set_xticklabels([v[3] for v in vals], fontsize=13.5); ax.set_ylabel("Throughput at C=256, ctx 2,048 (tok/s)"); ax.set_ylim(0, 2400)
-ax.text(2.55, 2180, f"With the cache on, FP8 vs FP16: {(pc8/pc16-1)*100:+.0f}%", ha="center", fontsize=15, fontweight="bold")
-ax.text(-.45, 2180, "Hatched bars use a different workload (corpus):\nthe shared-prefix prompts have no cache-off run.", fontsize=12.5, color=INK2, va="top")
-save(fig, "09_prefix_caching.png", "Prefix caching: the FP8 advantage is clean, the cache's own gain is unmeasured",
-     "Only the FP8-vs-FP16 comparison with the cache on is controlled · add a cache-off shared-prefix run to quantify the cache itself")
+fig, axs = plt.subplots(1, 2, figsize=(W, H), gridspec_kw=dict(width_ratios=[1.35, 1])); fig.subplots_adjust(left=.07, right=.985, top=.80, bottom=.17, wspace=.28)
+pcon = agg[agg.stage == "stage5_prefix_on"]; pcoff = agg[agg.stage == "stage5_cache_off"]
+def P(d, kv, c): return float(d[(d.kv_dtype == kv) & (d.concurrency == c)].tps.iloc[0])
+ax = axs[0]
+bars = [(P(pcoff, "auto", 256), FP16, True, "FP16\ncache off"), (P(pcon, "auto", 256), FP16, False, "FP16\ncache on"),
+        (P(pcoff, "fp8", 256), FP8, True, "FP8\ncache off"), (P(pcon, "fp8", 256), FP8, False, "FP8\ncache on")]
+for i, (v, col, off, t) in enumerate(bars):
+    x = i + (0.3 if i >= 2 else 0)
+    ax.bar(x, v, .62, facecolor="white" if off else col, edgecolor=col, hatch="////" if off else None, lw=1.8)
+    ax.text(x, v + 30, f"{v:,.0f}", ha="center", fontsize=15, fontweight="bold")
+ax.set_xticks([0, 1, 2.3, 3.3]); ax.set_xticklabels([b[3] for b in bars], fontsize=13.5)
+ax.set_ylabel("Throughput at C=256, ctx 2,048 (tok/s)"); ax.set_ylim(0, 2300)
+g16 = P(pcon, "auto", 256) / P(pcoff, "auto", 256) - 1; g8 = P(pcon, "fp8", 256) / P(pcoff, "fp8", 256) - 1
+ax.text(.5, 2130, f"cache gain {g16*100:+.0f}%", ha="center", fontsize=14, fontweight="bold", color=FP16)
+ax.text(2.8, 2130, f"cache gain {g8*100:+.0f}%", ha="center", fontsize=14, fontweight="bold", color=FP8)
+ax.set_title("Same shared-prefix workload, cache off vs on", loc="left", fontsize=15)
+ax = axs[1]
+cs = [1, 32, 256]
+for kv, col in [("auto", FP16), ("fp8", FP8)]:
+    ax.plot(range(3), [P(pcon, kv, c) / P(pcoff, kv, c) for c in cs], "-o", color=col, lw=2.6, ms=8, mec="white", mew=1.4)
+    for k, c in enumerate(cs):
+        ax.text(k, P(pcon, kv, c) / P(pcoff, kv, c) + (.04 if kv == "fp8" else -.06), f"{P(pcon, kv, c) / P(pcoff, kv, c):.2f}×", ha="center", fontsize=12.5, color=col, fontweight="bold", va="bottom" if kv == "fp8" else "top")
+ax.axhline(1, color=INK, ls="--", lw=1.2); ax.set_xticks(range(3)); ax.set_xticklabels(cs); ax.set_xlabel("Concurrency (C)"); ax.set_ylim(.85, 1.95)
+ax.set_ylabel("Cache-on / cache-off throughput (×)"); ax.set_title("The cache helps more under load", loc="left", fontsize=15)
+ax.legend(handles=[Line2D([], [], color=FP16, lw=3, label="FP16 KV"), Line2D([], [], color=FP8, lw=3, label="FP8 KV")], loc="upper left", fontsize=13)
+fv = P(pcon, "fp8", 256) / P(pcon, "auto", 256) - 1; fo = P(pcoff, "fp8", 256) / P(pcoff, "auto", 256) - 1
+save(fig, "09_prefix_caching.png", "Prefix caching adds about +65% for both dtypes; FP8's own gain is mostly capacity",
+     f"FP8 over FP16 at C=256: {fo*100:+.0f}% with the cache off, {fv*100:+.0f}% with it on · 3 repeats, clean re-run")
 
 # =====================================================================================
 # 10. Quality
@@ -363,7 +375,13 @@ t4 = pd.DataFrame([dict(KV="FP16" if kv == "auto" else "FP8", Method=MNAME[sp], 
                         accepted=LOGM[(kv, sp)]["accepted"], drafted=LOGM[(kv, sp)]["drafted"], drafted_per_accepted=LOGM[(kv, sp)]["ratio"],
                         accept_rate=LOGM[(kv, sp)]["acc"], pos1=LOGM[(kv, sp)]["pos"][0], pos2=LOGM[(kv, sp)]["pos"][1], pos3=LOGM[(kv, sp)]["pos"][2], pos4=LOGM[(kv, sp)]["pos"][3])
                    for (kv, sp) in LOGS])
+t5 = pd.DataFrame([dict(KV="FP16" if kv == "auto" else "FP8", C=c, cache_off=P(pcoff, kv, c), cache_on=P(pcon, kv, c), gain_pct=(P(pcon, kv, c) / P(pcoff, kv, c) - 1) * 100,
+                        preempt_off=float(pcoff[(pcoff.kv_dtype == kv) & (pcoff.concurrency == c)].pre.iloc[0]), preempt_on=float(pcon[(pcon.kv_dtype == kv) & (pcon.concurrency == c)].pre.iloc[0]))
+                   for kv in ["auto", "fp8"] for c in [1, 32, 256]])
+t6 = pd.read_csv(U + "rebuilt_vs_rerun.csv") if os.path.exists(U + "rebuilt_vs_rerun.csv") else pd.DataFrame()
 with pd.ExcelWriter(OUT + "comparison_tables.xlsx") as xw:
+    t5.round(2).to_excel(xw, "Prefix_cache_on_vs_off", index=False)
+    if len(t6): t6.to_excel(xw, "Rebuilt_vs_rerun", index=False)
     t1.round(3).to_excel(xw, "Stage1_FP16_vs_FP8", index=False); t2.round(3).to_excel(xw, "Speculation_speedups", index=False)
     t3.round(2).to_excel(xw, "Best_config_by_C", index=False); t4.round(3).to_excel(xw, "Speculator_tax", index=False)
 print(t3.round(1).to_string()); print(t4.round(2).to_string())

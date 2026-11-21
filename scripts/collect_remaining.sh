@@ -12,7 +12,7 @@
 #
 # Everything goes to NEW files (results_extra/, results_budget/lm_eval_mmlu/); nothing existing
 # is modified. The `run` steps are resumable: if one dies, re-run the same command.
-set -e
+set -eo pipefail
 
 if [ -f "/venv/main/bin/activate" ]; then source /venv/main/bin/activate; fi
 cd "$(dirname "$0")/.."

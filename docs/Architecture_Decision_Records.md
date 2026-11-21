@@ -2,7 +2,7 @@
 
 **Project:** Balancing Memory and Compute in LLM Serving (FP8 KV cache and speculative decoding), Project ID 24, solo (Mridul Pant, cs24mtech15009).
 **Repository:** https://github.com/mridulpant2010/llm_serving
-**Log written:** 2026-11-15, finalised 2026-11-21. For ADR-001 to ADR-005 the dates below are the *earliest evidence in the git history* (commit and date), not remembered decision dates, and nothing is backdated. ADR-006 to ADR-008 were decided on the dates shown.
+**Log written:** 2026-11-15, updated and finalised 2026-11-21. For ADR-001 to ADR-005 the dates below are the *earliest evidence in the git history* (commit and date), not remembered decision dates, and nothing is backdated. ADR-006 to ADR-009 were decided on the dates shown.
 
 | ID | Title | Status |
 |---|---|---|
@@ -12,8 +12,9 @@
 | ADR-004 | Dual-metric crossover (TPOT and throughput) | **Superseded by ADR-006** |
 | ADR-005 | Quality protocol: in-engine perplexity and HumanEval | Accepted, with limits |
 | ADR-006 | Throughput speedup is the primary metric; no headline C* | Accepted |
-| ADR-007 | Use only measured fields from the 64 rebuilt rows | Accepted |
-| ADR-008 | Reduced budget matrix, and early stop when credit ran out | Accepted |
+| ADR-007 | Use only measured fields from the 64 rebuilt rows | **Superseded by ADR-009** |
+| ADR-008 | Reduced budget matrix, and early stop when credit ran out | Accepted; extra stages later run (ADR-009) |
+| ADR-009 | Re-run Stages 3 to 5 and stop using the rebuilt rows | Accepted |
 
 ---
 
@@ -79,13 +80,13 @@
 
 ## ADR-007: Use only measured fields from the 64 rebuilt rows
 
-- **Date, status, scope:** Rebuild committed on or before 2026-11-09 (commit `b50b838`); analysis rule decided 2026-11-14. Accepted. Data handling for rows 93-156 of `results.jsonl` (Stage 3 draft model at C=256 and EAGLE, all of Stages 4 and 5).
+- **Date, status, scope:** Rebuild committed on or before 2026-11-09 (commit `b50b838`); analysis rule decided 2026-11-14. **Superseded by ADR-009 on 2026-11-21.** Data handling for rows 93-156 of `results.jsonl` (Stage 3 draft model at C=256 and EAGLE, all of Stages 4 and 5).
 - **Context:** The `results.jsonl` downloaded from the first Vast.ai instance was truncated at 92 lines, while `run.log` and `summary.json` held one summary line per run for all stages. The 64 missing rows were rebuilt from those lines. Throughput, TPOT p50, KV blocks, preemptions and mean acceptance are measured values; TTFT, power, GPU utilisation and memory, KV usage, running and waiting counts and timestamps are placeholders or estimates.
-- **Options:** (1) Use all fields as recorded. (2) Use only the measured fields, corroborate acceptance with the server logs, and disclose the rebuild. (3) Discard Stages 3 (EAGLE), 4 and 5. (4) Re-run them (not possible: no GPU credit).
+- **Options:** (1) Use all fields as recorded. (2) Use only the measured fields, corroborate acceptance with the server logs, and disclose the rebuild. (3) Discard Stages 3 (EAGLE), 4 and 5. (4) Re-run them (not possible at the time: no GPU credit; done later, ADR-009).
 - **Decision and rationale:** Option 2. Placeholders carry no information; discarding the stages would remove the FP8 speculation sweep, which is the core of the study.
 - **Consequences:** No TTFT, energy or utilisation claims from these rows; throughput and TPOT have only 0.1 precision; the raw rows cannot be recovered; this is disclosed in the report (§8) and the slides.
 - **Evidence:** `results_budget/run.log`; rows 93-156 of `results_budget/results.jsonl` (placeholder signature: TTFT p50 500, power 298 W, timestamps 1793600000 to 1793600063); `evaluation/make_analysis.py`.
-- **Revisit trigger:** The clean re-run (`stage4r_spec_fp8`, `stage3r_eagle_fp16` in `configs/extra.yaml`) is executed.
+- **Revisit trigger:** The clean re-run (`stage4r_spec_fp8`, `stage3r_spec_fp16` in `configs/extra.yaml`) is executed. It was, on 2026-11-21; see ADR-009.
 
 ## ADR-008: Reduced budget matrix, and early stop when credit ran out
 
@@ -93,6 +94,16 @@
 - **Context:** About 4 GPU-hours were available. The full matrix needs 12 to 15.
 - **Options:** (1) Full matrix. (2) Budget matrix: 2 repeats, 5 concurrency levels, 3 contexts in Stage 1 (`configs/budget.yaml`). (3) Also run the extra stages after the budget matrix.
 - **Decision and rationale:** Option 2 first. When GPU credit ran out on 2026-11-14, Option 3 was **not** done; the extra stages are specified and ready (`configs/extra.yaml`, `scripts/collect_remaining.sh`).
-- **Consequences:** MMLU, the cache-off prefix control, the finer grid and a clean Stage 4 re-run are missing and are listed as not run in the report. All claims are limited to the 5-level, 2-repeat data.
+- **Consequences:** At the time, MMLU, the cache-off prefix control, the finer grid and a clean Stage 4 re-run were missing. The re-run and the cache-off control were later done (ADR-009); MMLU and the finer grid are still not run and are listed as not run in the report.
 - **Evidence:** `configs/budget.yaml` header; `configs/extra.yaml`.
-- **Revisit trigger:** Any new GPU credit; start with MMLU and the cache-off control.
+- **Revisit trigger:** Any new GPU credit; remaining: MMLU and the finer grid.
+
+## ADR-009: Re-run Stages 3 to 5 and stop using the rebuilt rows
+
+- **Date, status, scope:** 2026-11-21. Accepted. Supersedes ADR-007. Data used for Stages 3, 4 and 5 and every claim that depends on them.
+- **Context and evidence for change:** New GPU credit became available on the submission day. The 64 rebuilt rows carried placeholder telemetry (ADR-007), and the speculation-versus-load result rested on them. Old approach (use measured fields from the rebuilt rows) to new evidence (a clean run is possible) to the selected approach below.
+- **Options:** (1) Keep the rebuilt rows and disclose them (ADR-007). (2) Re-run only the rebuilt stages. (3) Re-run the whole budget matrix. (4) Re-run the rebuilt stages plus the cache-off control, with 3 repeats.
+- **Decision and rationale:** Option 4, run on a second instance with the same vLLM (0.32.0) and model, using `configs/extra.yaml` (`stage4r_spec_fp8`, `stage3r_spec_fp16`, `stage5r_prefix_on`, `stage5c_prefix_control`: 11 launches, 141 measured rows). Stage 1 and the FP16 N-gram sweep were raw already and were kept; re-running them was not worth the time. The merge rule is in `evaluation/merge_results.py`: rebuilt rows are excluded, failed launches are excluded, and each row records its source.
+- **Consequences:** All telemetry in Stages 3 to 5 is now real. The rebuilt rows agree with clean data within 5% in 29 of 32 cells (median 1.2%); the FP8 draft model at C=1, 4 and 16 had been overstated by 19%, 16% and 10%, so the claim that FP8 widens the break-even for speculation was withdrawn and replaced by "FP8 does not rescue speculation". The cache-off control shows the cache adds about 65% for both dtypes. Cost: two instances (drivers 580.105.08 and 595.99.02); the FP16 baselines agree within 2%. MMLU and the finer grid were not run.
+- **Evidence:** `results_extra/` (rows, `run.log`, `server_logs/`, `env.txt`), `results_final/rebuilt_vs_rerun.csv`, `evaluation/output/`.
+- **Revisit trigger:** A result that the FP8 draft-model slowdown disappears on another vLLM version, or MMLU shows a quality loss.

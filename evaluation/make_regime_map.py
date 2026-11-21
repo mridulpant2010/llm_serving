@@ -1,6 +1,6 @@
 import sys
-# usage: python evaluation/make_regime_map.py [results_dir] [output_dir]
-U = (sys.argv[1] if len(sys.argv) > 1 else "results_budget").rstrip("/") + "/"
+# usage: python evaluation/make_regime_map.py [results_dir] [output_dir]   (results_dir from merge_results.py)
+U = (sys.argv[1] if len(sys.argv) > 1 else "results_final").rstrip("/") + "/"
 OUT = (sys.argv[2] if len(sys.argv) > 2 else "evaluation/output").rstrip("/") + "/"
 import json, numpy as np, pandas as pd
 import matplotlib; matplotlib.use("Agg")
@@ -19,12 +19,12 @@ for kv in ["auto","fp8"]:
     for sp,_ in meths:
         d=corp[(corp.kv_dtype==kv)&(corp.spec==sp)]
         for c in Cs:
-            v=[r.throughput_tps/base[(base.concurrency==c)&(base.rep==r.rep)].throughput_tps.iloc[0] for _,r in d[d.concurrency==c].iterrows()]
+            v=[r.throughput_tps/base[(base.concurrency==c)&(base.rep==r.rep)&(base.source==r.source)].throughput_tps.iloc[0] for _,r in d[d.concurrency==c].iterrows()]
             S[(kv,sp,c)]=np.mean(v); LO[(kv,sp,c)]=min(v); HI[(kv,sp,c)]=max(v)
 cmap=LinearSegmentedColormap.from_list("div",[FP8,"#f3f4f6",FP16]); norm=TwoSlopeNorm(vmin=.7,vcenter=1.0,vmax=1.45)
 fig=plt.figure(figsize=(13.33,7.5))
-fig.suptitle("Regime map: speculation pays at low concurrency and loses from C=64",x=.045,y=.985,ha="left",fontsize=22,fontweight="bold")
-fig.text(.045,.915,"Throughput speedup vs. no speculation (same KV dtype), ctx 2,048 · dotted = within repeat noise of parity",fontsize=14.5,color=INK2)
+fig.suptitle("Regime map: speculation pays only at the lowest loads, and FP8 does not rescue it",x=.045,y=.985,ha="left",fontsize=22,fontweight="bold")
+fig.text(.045,.915,"Throughput speedup vs. no speculation (same KV dtype), ctx 2,048 · dotted = repeats straddle parity (3 repeats; FP16 N-gram: 2)",fontsize=14.5,color=INK2)
 for k,(kv,title,pos) in enumerate([("auto","FP16 KV cache",[.13,.44,.38,.40]),("fp8","FP8 KV cache",[.57,.44,.38,.40])]):
     ax=fig.add_axes(pos); ax.set_xlim(0,5); ax.set_ylim(0,3); ax.invert_yaxis()
     for i,(sp,nm) in enumerate(meths):
@@ -45,7 +45,7 @@ cax.imshow(grad,aspect="auto",cmap=cmap,norm=norm,extent=[.7,1.45,0,1]); cax.set
 cax.tick_params(length=3); [s.set_visible(False) for s in cax.spines.values()]
 # winners strip
 cfg={}
-sp_ab=df[df.stage.isin(["stage3_spec_fp16","stage4_spec_fp8"])]
+sp_ab=df[df.stage.isin(["stage3_spec_fp16","stage4_spec_fp8"])&~((df.source=="original")&(df.spec=="none"))]
 ag=sp_ab.groupby(["kv_dtype","spec","concurrency"]).throughput_tps.mean()
 fig.text(.57,.30,"Best configuration at each C (highest tok/s)",fontsize=13.5,fontweight="bold",color=INK2)
 ax2=fig.add_axes([.57,.10,.38,.17]); ax2.set_xlim(0,5); ax2.set_ylim(0,1); ax2.axis("off")
@@ -54,6 +54,6 @@ for j,c in enumerate(Cs):
     kv,sp=max(ag.index.droplevel(2).unique(),key=lambda t:ag[(t[0],t[1],c)])
     col=CC.get(sp,FP8 if kv=="fp8" else FP16)
     ax2.text(j+.5,.5,f"{'FP8' if kv=='fp8' else 'FP16'}\n{NM[sp]}",ha="center",va="center",fontsize=13,fontweight="bold",color="white",bbox=dict(boxstyle="round,pad=.4",fc=col,ec="none"))
-fig.text(.13,.235,"Reading the map",fontsize=14,fontweight="bold",color=INK)
-fig.text(.13,.045,"• Speculation pays only at C ≤ 4 (≤ 16 for the draft model).\n• FP8 shifts N-gram and EAGLE from losing to parity at C=16.\n• From C=64 up, no speculative method beats no speculation.",fontsize=13,color=INK2,va="bottom",linespacing=1.5)
+fig.text(.13,.222,"Reading the map",fontsize=14,fontweight="bold",color=INK)
+fig.text(.13,.012,"• Speculation pays only at C ≤ 4.\n  FP16 draft model: parity at C=16.\n• FP8 does not help the draft model:\n  1.50× at C=1 with FP16, 1.03× with FP8.\n• From C=64 up, no method beats\n  no speculation.",fontsize=12,color=INK2,va="bottom",linespacing=1.25)
 fig.savefig(OUT+"11_regime_map.png",dpi=200); print({k:round(v,2) for k,v in S.items() if k[2] in (16,)})
