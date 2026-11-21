@@ -63,3 +63,6 @@ build/
 dist/
 *.egg-info/
 .eggs/
+
+vastai
+vastai.pub
