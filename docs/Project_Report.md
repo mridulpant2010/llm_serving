@@ -2,7 +2,7 @@
 
 **Course:** CS5903 Distributed AI Training | **Project ID:** 24 | **Group:** 9 (solo project)  
 **Student:** Mridul Pant (cs24mtech15009), IIT Hyderabad  
-**Repository:** https://github.com/mridulpant2010/llm_serving | **Final tag:** `cs5903-final-2026` | **Commit:** `[FILL: SHA of the tagged commit]`  
+**Repository:** https://github.com/mridulpant2010/llm_serving | **Final tag:** `cs5903-final-2026` | **Code and results commit:** `6c2b5d0` (the final tag adds only this line and the rebuilt PDF)  
 **Companion documents:** `docs/Architecture_Decision_Records.md`, `README.md`, `evaluation/`  
 
 ## Executive summary
@@ -172,7 +172,7 @@ At C=1, a bandwidth model (16.06 GB of weights at about 1.2 TB/s plus KV reads) 
 2. **Two instances.** Stage 1 and the FP16 N-gram sweep come from the first instance (driver 580.105.08), the rest from the second (595.99.02). The FP16 baselines agree within 2%, but the instances are not identical. The FP16 N-gram sweep has 2 repeats and is paired with the first run's own baseline.
 3. **Low statistical power.** 3 repeats (2 for Stage 1 and FP16 N-gram) and 5 concurrency levels: speedups are reported with their range, and crossover points are not claimed. The FP8 draft model's gain at C=4 and the EAGLE gains at C=4 touch 1.0.
 4. **Unexplained results.** The FP8 draft model is much slower than the FP16 draft model at C=1 (74 versus 107 tok/s) with equal acceptance; the cause is not tested. The FP16 perplexity run at 7,680 tokens crashed; the cause is not diagnosed.
-5. **Reproducibility gaps.** The first instance's setup output (CUDA, PyTorch versions) was not saved; the second instance's is. The `vastai` SSH private key was committed to the repository and must be revoked; it is unrelated to the results. `[CONFIRM: key revoked, removed from tracking]`.
+5. **Reproducibility gaps.** The first instance's setup output (CUDA, PyTorch versions) was not saved; the second instance's is. The `vastai` SSH private key was committed to the repository and must be revoked; it is unrelated to the results. Status at submission: removed from tracking; revoking it at the provider is still to be done by the owner (`docs/open_issues.md`, issue 5).
 6. **No GitHub issues** exist yet for the open items below.
 
 **How much weight the results can bear.**
